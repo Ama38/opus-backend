@@ -135,6 +135,15 @@ def _finalize_login(phone: str, *, full_name: str = "", language: str | None = N
         user.language = language
         update_fields.append("language")
     user.save(update_fields=update_fields)
+
+    # TEST MODE: auto-approve every new user as a master (with a test package) so
+    # they can go online without moderation. Toggle with MASTERGO_AUTO_APPROVE_MASTERS.
+    if getattr(settings, "MASTERGO_AUTO_APPROVE_MASTERS", False):
+        from apps.masters.services import auto_approve_master, get_or_create_master_profile
+
+        auto_approve_master(get_or_create_master_profile(user))
+        user.refresh_from_db()
+
     return OTPVerifyResult(user=user, is_new_user=is_new_user)
 
 

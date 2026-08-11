@@ -13,11 +13,16 @@ class UserAdmin(DjangoUserAdmin):
     fieldsets = [
         (None, {"fields": ["phone", "password"]}),
         ("Profile", {"fields": ["full_name", "avatar_url", "language"]}),
-        ("Roles", {"fields": ["is_client_enabled", "is_master_enabled"]}),
+        (
+            "Roles (master status is managed on the Master profile — read-only here)",
+            {"fields": ["is_client_enabled", "is_master_enabled"]},
+        ),
         ("Permissions", {"fields": ["is_active", "is_staff", "is_superuser", "groups", "user_permissions"]}),
         ("Dates", {"fields": ["last_login", "date_joined", "updated_at"]}),
     ]
-    readonly_fields = ["date_joined", "updated_at", "last_login"]
+    # is_master_enabled mirrors MasterProfile.status (set by approve/reject/block);
+    # editing it directly would drift from the moderation truth, so it's read-only.
+    readonly_fields = ["date_joined", "updated_at", "last_login", "is_master_enabled"]
     add_fieldsets = [
         (
             None,

@@ -9,4 +9,6 @@ redis>=5.0,<7.0
 uvicorn[standard]>=0.30,<1.0
 Pillow>=10.0,<12.0
 requests>=2.31,<3.0
+firebase-admin>=6.5,<7.0
+django-jazzmin>=3.0,<4.0
 

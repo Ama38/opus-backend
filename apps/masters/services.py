@@ -8,7 +8,7 @@ from django.conf import settings
 from django.db.models import Q
 from django.utils import timezone
 
-from apps.billing.models import MasterWallet
+from apps.billing.models import MasterSubscription, MasterWallet
 from apps.orders.models import MasterOffer, MasterOfferStatus, Order, OrderStatus
 
 from .models import MasterProfile, MasterStatus
@@ -36,9 +36,30 @@ class MasterAnalytics:
 
 
 def get_or_create_master_profile(user) -> MasterProfile:
-    profile, _ = MasterProfile.objects.get_or_create(user=user)
+    profile, created = MasterProfile.objects.get_or_create(user=user)
     MasterWallet.objects.get_or_create(master=profile)
+    MasterSubscription.objects.get_or_create(master=profile)
+    if created and getattr(settings, "MASTERGO_AUTO_APPROVE_MASTERS", False):
+        auto_approve_master(profile)
     return profile
+
+
+def auto_approve_master(profile: MasterProfile) -> MasterProfile:
+    """TEST MODE: approve the master and grant a test package so they can go
+    online immediately, bypassing operator moderation. Idempotent."""
+    from apps.billing.services import activate_package, get_or_create_subscription
+
+    if profile.status != MasterStatus.APPROVED:
+        profile.approve()
+    subscription = get_or_create_subscription(profile)
+    if not subscription.is_active:
+        activate_package(profile, orders_count=100, days=90)
+    return profile
+
+
+def master_has_active_subscription(master: MasterProfile) -> bool:
+    subscription = MasterSubscription.objects.filter(master=master).first()
+    return subscription is not None and subscription.is_active
 
 
 def master_can_receive_orders(master: MasterProfile) -> bool:
@@ -46,8 +67,7 @@ def master_can_receive_orders(master: MasterProfile) -> bool:
         return False
     if not master.is_online:
         return False
-    wallet = MasterWallet.objects.filter(master=master).first()
-    if wallet is None or wallet.balance_uzs <= settings.MASTERGO_MIN_MASTER_BALANCE_UZS:
+    if not master_has_active_subscription(master):
         return False
     active_statuses = [
         OrderStatus.OFFERED_TO_MASTER,

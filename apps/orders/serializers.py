@@ -72,6 +72,8 @@ class OrderSerializer(serializers.ModelSerializer):
             "longitude",
             "scheduled_at",
             "budget_ceiling_uzs",
+            "price_flexible",
+            "needs_operator",
             "attachments",
             "agreed_price_uzs",
             "pending_price_proposal_uzs",
@@ -91,6 +93,7 @@ class OrderSerializer(serializers.ModelSerializer):
             "master_id",
             "master_name",
             "master_phone",
+            "needs_operator",
             "status",
             "agreed_price_uzs",
             "pending_price_proposal_uzs",
@@ -141,7 +144,10 @@ class PriceProposalSerializer(serializers.ModelSerializer):
 
 
 class MatchSerializer(serializers.Serializer):
-    radius_km = serializers.ChoiceField(choices=[1, 3, 6], default=1)
+    from django.conf import settings as _settings
+
+    _radii = list(getattr(_settings, "MASTERGO_MATCHING_RADII_KM", (3, 7, 0)))
+    radius_km = serializers.ChoiceField(choices=_radii, default=_radii[0])
 
 
 class PriceProposalCreateSerializer(serializers.Serializer):

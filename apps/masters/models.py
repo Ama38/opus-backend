@@ -42,6 +42,11 @@ class MasterProfile(models.Model):
     current_longitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
     last_seen_at = models.DateTimeField(null=True, blank=True)
 
+    # Weekly leaderboard snapshot (TZ §7.2): rank recomputed by a periodic job;
+    # the previous value lets the UI show the ↑/↓ position change.
+    leaderboard_rank = models.PositiveIntegerField(null=True, blank=True)
+    leaderboard_rank_prev = models.PositiveIntegerField(null=True, blank=True)
+
     approved_at = models.DateTimeField(null=True, blank=True)
     blocked_at = models.DateTimeField(null=True, blank=True)
     block_reason = models.TextField(blank=True)
@@ -67,17 +72,61 @@ class MasterProfile(models.Model):
         self.save(update_fields=["status", "approved_at", "updated_at"])
 
 
+class MasterServiceStatus(models.TextChoices):
+    PENDING = "pending", "Pending"
+    APPROVED = "approved", "Approved"
+    REJECTED = "rejected", "Rejected"
+
+
 class MasterCategoryPrice(models.Model):
+    """A direction (service) the master offers. Up to 3 per master, each
+    moderated (status) and independently toggleable (is_active)."""
+
     master = models.ForeignKey(MasterProfile, on_delete=models.CASCADE, related_name="category_prices")
     category = models.ForeignKey(ServiceCategory, on_delete=models.PROTECT, related_name="master_prices")
     min_price_uzs = models.PositiveIntegerField()
     max_price_uzs = models.PositiveIntegerField()
     is_active = models.BooleanField(default=True)
+    status = models.CharField(
+        max_length=16, choices=MasterServiceStatus.choices, default=MasterServiceStatus.APPROVED
+    )
+    reject_reason = models.TextField(blank=True)
+    experience_years = models.CharField(max_length=16, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True, null=True, blank=True)
 
     class Meta:
         unique_together = ["master", "category"]
         ordering = ["category__sort_order"]
 
+    @property
+    def is_available(self) -> bool:
+        return self.is_active and self.status == MasterServiceStatus.APPROVED
+
     def __str__(self) -> str:
         return f"{self.master} / {self.category}: {self.min_price_uzs}-{self.max_price_uzs}"
+
+
+class MasterPortfolioItem(models.Model):
+    """A work sample the master chose to publish on their profile (TZ §6.3/§7.5).
+    Completion photos never land here automatically — the master adds them."""
+
+    master = models.ForeignKey(
+        MasterProfile, on_delete=models.CASCADE, related_name="portfolio_items"
+    )
+    category = models.ForeignKey(
+        ServiceCategory,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="portfolio_items",
+    )
+    image = models.ImageField(upload_to="portfolio/")
+    caption = models.CharField(max_length=200, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self) -> str:
+        return f"{self.master} portfolio #{self.pk}"
 

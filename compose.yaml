@@ -31,7 +31,7 @@ services:
       dockerfile: Dockerfile
     command: >
       sh -c "python manage.py migrate --noinput &&
-             python manage.py seed_categories &&
+             python manage.py seed_categories && python manage.py seed_packages &&
              uvicorn config.asgi:application --host 0.0.0.0 --port 8000"
     environment:
       DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-dev-mastergo-secret}

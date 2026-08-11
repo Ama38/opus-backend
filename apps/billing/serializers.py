@@ -1,6 +1,43 @@
 from rest_framework import serializers
 
-from .models import MasterLedgerEntry, MasterWallet
+from .models import (
+    MasterLedgerEntry,
+    MasterSubscription,
+    MasterWallet,
+    Package,
+    PackagePurchase,
+)
+
+
+class PackageSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Package
+        fields = ["id", "slug", "name_ru", "name_uz", "orders_count", "price_uzs", "sort_order"]
+
+
+class PackagePurchaseSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PackagePurchase
+        fields = ["id", "package", "orders_count", "price_uzs", "is_free", "status", "created_at", "activated_at"]
+
+
+class MasterSubscriptionSerializer(serializers.ModelSerializer):
+    is_active = serializers.BooleanField(read_only=True)
+    is_expired = serializers.BooleanField(read_only=True)
+    days_left = serializers.IntegerField(read_only=True)
+
+    class Meta:
+        model = MasterSubscription
+        fields = [
+            "orders_remaining",
+            "activated_at",
+            "expires_at",
+            "is_frozen",
+            "is_active",
+            "is_expired",
+            "days_left",
+        ]
+        read_only_fields = fields
 
 
 class MasterLedgerEntrySerializer(serializers.ModelSerializer):

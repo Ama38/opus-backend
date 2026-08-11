@@ -1,6 +1,30 @@
 from django.contrib import admin
 
-from .models import MasterCategoryPrice, MasterProfile, MasterStatus, ServiceCategory
+from .models import (
+    MasterCategoryPrice,
+    MasterProfile,
+    MasterServiceStatus,
+    MasterStatus,
+    ServiceCategory,
+)
+
+
+@admin.register(MasterCategoryPrice)
+class MasterCategoryPriceAdmin(admin.ModelAdmin):
+    list_display = ["master", "category", "status", "is_active", "min_price_uzs", "max_price_uzs"]
+    list_filter = ["status", "is_active", "category"]
+    search_fields = ["master__user__phone", "master__user__full_name", "category__name_ru"]
+    actions = ["approve_services", "reject_services"]
+
+    @admin.action(description="Approve selected services")
+    def approve_services(self, request, queryset):
+        updated = queryset.update(status=MasterServiceStatus.APPROVED, reject_reason="")
+        self.message_user(request, f"Approved {updated} service(s).")
+
+    @admin.action(description="Reject selected services")
+    def reject_services(self, request, queryset):
+        updated = queryset.update(status=MasterServiceStatus.REJECTED, is_active=False)
+        self.message_user(request, f"Rejected {updated} service(s).")
 
 
 @admin.register(ServiceCategory)

@@ -10,9 +10,9 @@ from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
-from apps.billing.models import MasterWallet
+from apps.billing.services import consume_order
 from apps.masters.models import MasterProfile
-from apps.masters.services import master_can_receive_orders
+from apps.masters.services import master_can_receive_orders, master_has_active_subscription
 from apps.notifications.models import NotificationEvent
 from apps.notifications.services import create_in_app_notification
 
@@ -27,8 +27,10 @@ from .models import (
     PriceProposalStatus,
 )
 
-MATCHING_RADII_KM = (1, 3, 6)
-MASTER_OFFER_TTL_SECONDS = 30
+# Radius stages (km); 0 = whole city (no distance cap). Configurable via settings.
+MATCHING_RADII_KM = tuple(getattr(settings, "MASTERGO_MATCHING_RADII_KM", (3, 7, 0)))
+MASTER_OFFER_TTL_SECONDS = int(getattr(settings, "MASTERGO_OFFER_TTL_SECONDS", 60))
+_DISTANCE_SCORE_CAP_KM = 10.0
 
 
 class OrderActionError(ValueError):
@@ -46,8 +48,8 @@ ALLOWED_TRANSITIONS: dict[str, set[str]] = {
         OrderStatus.CANCELLED,
         OrderStatus.EXPIRED,
     },
-    OrderStatus.ACCEPTED_BY_MASTER: {OrderStatus.PRICE_PROPOSED, OrderStatus.CANCELLED},
-    OrderStatus.PRICE_PROPOSED: {OrderStatus.PRICE_ACCEPTED, OrderStatus.CANCELLED},
+    OrderStatus.ACCEPTED_BY_MASTER: {OrderStatus.PRICE_PROPOSED, OrderStatus.SEARCHING, OrderStatus.CANCELLED},
+    OrderStatus.PRICE_PROPOSED: {OrderStatus.PRICE_ACCEPTED, OrderStatus.SEARCHING, OrderStatus.CANCELLED},
     OrderStatus.PRICE_ACCEPTED: {OrderStatus.MASTER_ON_WAY, OrderStatus.CANCELLED, OrderStatus.DISPUTED},
     OrderStatus.MASTER_ON_WAY: {OrderStatus.MASTER_ARRIVED, OrderStatus.CANCELLED, OrderStatus.DISPUTED},
     OrderStatus.MASTER_ARRIVED: {OrderStatus.IN_PROGRESS, OrderStatus.CANCELLED, OrderStatus.DISPUTED},
@@ -199,6 +201,7 @@ def create_order_notifications(order: Order, from_status: str, to_status: str, r
             order.address_text,
             payload,
         )
+        _push_incoming_offer(order)
         return
 
     if to_status == OrderStatus.SEARCHING and from_status == OrderStatus.OFFERED_TO_MASTER:
@@ -375,6 +378,35 @@ def _notify(user, event_type: str, title_ru: str, title_uz: str, body_ru: str, b
     )
 
 
+def _push_incoming_offer(order: Order) -> None:
+    """Send a high-priority FCM push so the master gets a ringing, full-screen
+    incoming-order alert even when the app is backgrounded or the phone locked."""
+    from apps.notifications.push import send_push_to_user
+
+    master_user = order.master.user
+    is_uzbek = getattr(master_user, "language", "ru") == "uz"
+    category = order.category.name_uz if is_uzbek else order.category.name_ru
+    title = "Yangi buyurtma" if is_uzbek else "Новая заявка"
+    body = f"{category} · {order.address_text}"
+    try:
+        send_push_to_user(
+            master_user,
+            title=title,
+            body=body,
+            data={
+                "event": "order.offered",
+                "type": "order.offered",
+                "order_id": str(order.id),
+                "category": category,
+                "address": order.address_text,
+            },
+            channel_id="incoming_orders",
+            sound="incoming_call",
+        )
+    except Exception:  # pragma: no cover - push must never break the order flow
+        pass
+
+
 def haversine_km(lat1: Decimal, lon1: Decimal, lat2: Decimal, lon2: Decimal) -> float:
     radius = 6371.0
     d_lat = radians(float(lat2 - lat1))
@@ -398,12 +430,73 @@ class MatchAttemptResult:
     exhausted: bool = False
 
 
+def _effective_rating(master: MasterProfile) -> float:
+    """New masters (<10 completed) get the platform starter rating instead of 0,
+    so they can compete while building their own history (cold-start fix)."""
+    threshold = int(getattr(settings, "MASTERGO_NEWCOMER_ORDER_THRESHOLD", 10))
+    starter = float(getattr(settings, "MASTERGO_STARTER_RATING", 4.5))
+    if master.completed_orders_count < threshold:
+        return max(float(master.rating or 0), starter)
+    return float(master.rating or 0)
+
+
+def _completion_rate(master: MasterProfile) -> float:
+    accepted = master.order_offers.filter(status=MasterOfferStatus.ACCEPTED).count()
+    if accepted == 0:
+        return 1.0  # no data yet: don't penalise
+    return min(1.0, master.completed_orders_count / accepted)
+
+
+def _reaction_score(master: MasterProfile) -> float:
+    """1.0 = instant reactions, 0.0 = always uses the full TTL. Newcomers with no
+    responses get the benefit of the doubt (1.0). Computed in Python so it works
+    the same on Postgres and SQLite (tests)."""
+    pairs = master.order_offers.filter(
+        status__in=[MasterOfferStatus.ACCEPTED, MasterOfferStatus.DECLINED],
+        responded_at__isnull=False,
+    ).values_list("created_at", "responded_at")
+    seconds = [(responded - created).total_seconds() for created, responded in pairs]
+    if not seconds:
+        return 1.0
+    avg = sum(seconds) / len(seconds)
+    return max(0.0, 1.0 - min(avg, MASTER_OFFER_TTL_SECONDS) / MASTER_OFFER_TTL_SECONDS)
+
+
 def score_master(order: Order, master: MasterProfile, distance_km: float) -> MasterScore:
-    distance_score = max(0.0, 1.0 - min(distance_km, 6.0) / 6.0)
-    rating_score = float(master.rating or 0) / 5.0
-    activity_score = max(0.0, min(master.activity_points, 1000) / 1000.0)
-    score = distance_score * 0.40 + rating_score * 0.35 + activity_score * 0.25
+    distance_score = max(0.0, 1.0 - min(distance_km, _DISTANCE_SCORE_CAP_KM) / _DISTANCE_SCORE_CAP_KM)
+    rating_score = _effective_rating(master) / 5.0
+    completion_score = _completion_rate(master)
+    reaction_score = _reaction_score(master)
+    weights = _match_weights()
+    score = (
+        distance_score * weights[0]
+        + rating_score * weights[1]
+        + completion_score * weights[2]
+        + reaction_score * weights[3]
+    )
     return MasterScore(master=master, distance_km=distance_km, score=score)
+
+
+def _match_weights() -> tuple[float, float, float, float]:
+    """Operator-editable matching weights (DB singleton), falling back to
+    Django settings if the platform_config table is unavailable."""
+    try:
+        from apps.platform_config.models import PlatformSettings
+
+        cfg = PlatformSettings.load()
+        return (
+            cfg.match_weight_distance,
+            cfg.match_weight_rating,
+            cfg.match_weight_completion,
+            cfg.match_weight_reaction,
+        )
+    except Exception:  # noqa: BLE001 - never let config lookup break matching
+        return (
+            float(getattr(settings, "MASTERGO_MATCH_WEIGHT_DISTANCE", 0.50)),
+            float(getattr(settings, "MASTERGO_MATCH_WEIGHT_RATING", 0.30)),
+            float(getattr(settings, "MASTERGO_MATCH_WEIGHT_COMPLETION", 0.10)),
+            float(getattr(settings, "MASTERGO_MATCH_WEIGHT_REACTION", 0.10)),
+        )
 
 
 def find_candidate_masters(order: Order, radius_km: int) -> list[MasterScore]:
@@ -414,6 +507,7 @@ def find_candidate_masters(order: Order, radius_km: int) -> list[MasterScore]:
         MasterProfile.objects.filter(
             category_prices__category=order.category,
             category_prices__is_active=True,
+            category_prices__status="approved",
             current_latitude__isnull=False,
             current_longitude__isnull=False,
         )
@@ -429,10 +523,24 @@ def find_candidate_masters(order: Order, radius_km: int) -> list[MasterScore]:
         if not master_can_receive_orders(master):
             continue
         distance_km = haversine_km(order.latitude, order.longitude, master.current_latitude, master.current_longitude)
-        if distance_km <= radius_km:
+        # radius_km == 0 means "whole city": no distance cap.
+        if radius_km == 0 or distance_km <= radius_km:
             scored.append(score_master(order, master, distance_km))
 
     return sorted(scored, key=lambda item: item.score, reverse=True)
+
+
+def _pick_best_candidate(candidates: list[MasterScore]) -> MasterScore:
+    """Usually the top-scored master, but every Nth platform offer prioritises a
+    newcomer (<10 completed orders) if one is in range, so new masters get real
+    orders instead of watching their package expire."""
+    threshold = int(getattr(settings, "MASTERGO_NEWCOMER_ORDER_THRESHOLD", 10))
+    every = int(getattr(settings, "MASTERGO_NEWCOMER_PRIORITY_EVERY", 5))
+    if every > 0 and (MasterOffer.objects.count() % every == 0):
+        newcomers = [c for c in candidates if c.master.completed_orders_count < threshold]
+        if newcomers:
+            return newcomers[0]
+    return candidates[0]
 
 
 def expire_stale_master_offers(*, continue_matching: bool = False) -> int:
@@ -490,7 +598,7 @@ def expire_master_offer(offer_id: int, *, continue_matching: bool = True) -> boo
         _broadcast_master_offer_event(expired_offer, "offer_expired")
     if continue_matching and order_id is not None:
         order = Order.objects.select_related("client", "category").get(id=order_id)
-        match_order_with_radius_expansion(order, start_radius_km=1)
+        match_order_with_radius_expansion(order, start_radius_km=MATCHING_RADII_KM[0])
     return True
 
 
@@ -530,11 +638,84 @@ def decline_master_offer(offer: MasterOffer, *, actor=None) -> MatchAttemptResul
 
     _broadcast_master_offer_event(declined_offer, "offer_declined")
     order = Order.objects.select_related("client", "category").get(id=order_id)
-    return match_order_with_radius_expansion(order, start_radius_km=1)
+    return match_order_with_radius_expansion(order, start_radius_km=MATCHING_RADII_KM[0])
+
+
+def client_reject_master(order: Order, *, actor=None) -> MatchAttemptResult:
+    """Client asked for a different master ("искать другого"). The current
+    master is dropped (their debited order is NOT refunded) and excluded from
+    re-matching. After the configured number of refusals the order is routed to
+    an operator instead of auto-matching."""
+    reassignable = {
+        OrderStatus.OFFERED_TO_MASTER,
+        OrderStatus.ACCEPTED_BY_MASTER,
+        OrderStatus.PRICE_PROPOSED,
+    }
+    order_id = None
+    dropped_offer = None
+    route_to_operator = False
+    with transaction.atomic():
+        order = Order.objects.select_for_update().select_related("client").get(id=order.id)
+        if order.status not in reassignable:
+            raise OrderActionError("order_not_reassignable")
+
+        order.client_refusals += 1
+        refusals = order.client_refusals
+        threshold = int(getattr(settings, "MASTERGO_CLIENT_REFUSALS_TO_OPERATOR", 3))
+
+        current = order.master_offers.filter(status=MasterOfferStatus.PENDING).order_by("-created_at").first()
+        if current is not None:
+            current.status = MasterOfferStatus.DECLINED
+            current.responded_at = timezone.now()
+            current.save(update_fields=["status", "responded_at"])
+            dropped_offer = current
+
+        # Notify the dropped master (their unit stays spent).
+        if order.master_id:
+            _notify(
+                order.master.user,
+                "order.client_left",
+                "Клиент ищет другого мастера",
+                "Mijoz boshqa usta qidiryapti",
+                "Клиент решил искать другого мастера.",
+                "Mijoz boshqa usta qidirishga qaror qildi.",
+                {"order_id": str(order.id)},
+            )
+
+        order.master = None
+        route_to_operator = refusals >= threshold
+        if route_to_operator:
+            order.needs_operator = True
+        order.save(update_fields=["master", "client_refusals", "needs_operator", "updated_at"])
+        transition_order(
+            order,
+            OrderStatus.SEARCHING,
+            actor=actor,
+            reason="client_refused_master",
+            metadata={"refusals": refusals, "needs_operator": route_to_operator},
+        )
+        order_id = order.id
+
+    if dropped_offer is not None:
+        _broadcast_master_offer_event(dropped_offer, "offer_declined")
+
+    order = Order.objects.select_related("client", "category").get(id=order_id)
+    if route_to_operator:
+        _notify(
+            order.client,
+            "order.operator_search",
+            "Подбираем мастера вручную",
+            "Ustani qo‘lda tanlayapmiz",
+            "Оператор свяжется с вами и подберёт мастера.",
+            "Operator siz bilan bog‘lanadi va usta tanlaydi.",
+            {"order_id": str(order.id)},
+        )
+        return MatchAttemptResult(order=order, offer=None, attempted_radii_km=(), exhausted=True)
+    return match_order_with_radius_expansion(order, start_radius_km=MATCHING_RADII_KM[0])
 
 
 @transaction.atomic
-def offer_order_to_best_master(order: Order, radius_km: int = 1) -> MasterOffer | None:
+def offer_order_to_best_master(order: Order, radius_km: int = MATCHING_RADII_KM[0]) -> MasterOffer | None:
     expire_stale_master_offers()
     order.refresh_from_db(fields=["status", "master", "updated_at"])
     current_offer = order.master_offers.filter(
@@ -550,7 +731,7 @@ def offer_order_to_best_master(order: Order, radius_km: int = 1) -> MasterOffer 
     if not candidates:
         return None
 
-    best = candidates[0]
+    best = _pick_best_candidate(candidates)
     offer = MasterOffer.objects.create(
         order=order,
         master=best.master,
@@ -572,7 +753,7 @@ def offer_order_to_best_master(order: Order, radius_km: int = 1) -> MasterOffer 
 
 
 @transaction.atomic
-def match_order_with_radius_expansion(order: Order, start_radius_km: int = 1) -> MatchAttemptResult:
+def match_order_with_radius_expansion(order: Order, start_radius_km: int = MATCHING_RADII_KM[0]) -> MatchAttemptResult:
     expire_stale_master_offers()
     order.refresh_from_db(fields=["status", "master", "updated_at"])
     current_offer = order.master_offers.filter(
@@ -640,7 +821,7 @@ def match_open_orders(limit: int = 20) -> int:
         .order_by("created_at")[:limit]
     )
     for order in orders:
-        result = match_order_with_radius_expansion(order, start_radius_km=1)
+        result = match_order_with_radius_expansion(order, start_radius_km=MATCHING_RADII_KM[0])
         if result.offer is not None:
             matched_count += 1
     return matched_count
@@ -665,6 +846,8 @@ def accept_master_offer(offer: MasterOffer) -> Order:
     offer.save(update_fields=["status", "responded_at"])
     order.master = offer.master
     order.save(update_fields=["master", "updated_at"])
+    # Debit one order slot from the package at the moment of acceptance (no refunds).
+    consume_order(offer.master, note=f"order {order.id}")
     order = transition_order(order, OrderStatus.ACCEPTED_BY_MASTER, actor=offer.master.user, reason="master_accepted")
     _broadcast_master_offer_event(offer, "offer_accepted")
     return order
@@ -677,8 +860,7 @@ def _master_can_accept_current_offer(master: MasterProfile, order: Order) -> boo
         return False
     if not master.is_online:
         return False
-    wallet = MasterWallet.objects.filter(master=master).first()
-    if wallet is None or wallet.balance_uzs <= settings.MASTERGO_MIN_MASTER_BALANCE_UZS:
+    if not master_has_active_subscription(master):
         return False
     active_statuses = [
         OrderStatus.OFFERED_TO_MASTER,

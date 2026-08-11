@@ -40,6 +40,7 @@ if railway_public_domain := os.getenv("RAILWAY_PUBLIC_DOMAIN"):
     ALLOWED_HOSTS.append(railway_public_domain)
 
 INSTALLED_APPS = [
+    "jazzmin",  # modern admin theme (must be before django.contrib.admin)
     "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",
@@ -59,6 +60,7 @@ INSTALLED_APPS = [
     "apps.reviews",
     "apps.support",
     "apps.notifications",
+    "apps.platform_config",
 ]
 
 MIDDLEWARE = [
@@ -211,7 +213,30 @@ REST_FRAMEWORK = {
 
 MASTERGO_MOCK_OTP = env_bool("MASTERGO_MOCK_OTP", False)
 MASTERGO_MOCK_OTP_CODE = os.getenv("MASTERGO_MOCK_OTP_CODE", "1111")
-MASTERGO_MIN_MASTER_BALANCE_UZS = 40_000
+MASTERGO_MIN_MASTER_BALANCE_UZS = 40_000  # deprecated: money-balance gate replaced by packages
+
+# --- Subscription / packages (v3) ---
+# Days a package is valid from activation. TZ default 30; recommends 90 for launch.
+MASTERGO_PACKAGE_EXPIRY_DAYS = int(os.getenv("MASTERGO_PACKAGE_EXPIRY_DAYS", "90"))
+# Launch free period: packages are activated immediately at no cost.
+MASTERGO_FREE_PACKAGES = env_bool("MASTERGO_FREE_PACKAGES", True)
+# TEST MODE: every new master is auto-approved and granted a test package so
+# they can go online without operator moderation. Set to 0 for production.
+MASTERGO_AUTO_APPROVE_MASTERS = env_bool("MASTERGO_AUTO_APPROVE_MASTERS", True)
+
+# --- Matching (v3) ---
+MASTERGO_MATCHING_RADII_KM = (3, 7, 0)  # 0 = whole city (no distance cap)
+MASTERGO_OFFER_TTL_SECONDS = int(os.getenv("MASTERGO_OFFER_TTL_SECONDS", "60"))
+MASTERGO_RADIUS_EXPAND_SECONDS = int(os.getenv("MASTERGO_RADIUS_EXPAND_SECONDS", "180"))
+MASTERGO_MATCH_WEIGHT_DISTANCE = 0.50
+MASTERGO_MATCH_WEIGHT_RATING = 0.30
+MASTERGO_MATCH_WEIGHT_COMPLETION = 0.10
+MASTERGO_MATCH_WEIGHT_REACTION = 0.10
+MASTERGO_STARTER_RATING = float(os.getenv("MASTERGO_STARTER_RATING", "4.5"))
+MASTERGO_NEWCOMER_ORDER_THRESHOLD = 10  # < this many completed = "newcomer"
+MASTERGO_NEWCOMER_PRIORITY_EVERY = 5    # every Nth order prioritises a newcomer
+MASTERGO_CLIENT_REFUSALS_TO_OPERATOR = 3
+
 MASTERGO_OFFER_EXPIRATION_TIMER_ENABLED = env_bool("MASTERGO_OFFER_EXPIRATION_TIMER_ENABLED", True)
 OSRM_ENABLED = env_bool("OSRM_ENABLED", False)
 OSRM_BASE_URL = os.getenv("OSRM_BASE_URL", "https://router.project-osrm.org")
@@ -236,3 +261,52 @@ OTP_SMS_TEMPLATE = os.getenv(
     "OTP_SMS_TEMPLATE",
     "MasterGo: tasdiqlash kodi {code}. Hech kimga bermang.",
 )
+
+
+# --- Admin theme (django-jazzmin) ---
+JAZZMIN_SETTINGS = {
+    "site_title": "Opus Admin",
+    "site_header": "Opus",
+    "site_brand": "Opus",
+    "welcome_sign": "Opus — панель оператора",
+    "copyright": "Opus",
+    "search_model": ["accounts.User", "masters.MasterProfile", "orders.Order"],
+    "topmenu_links": [
+        {"name": "Заказы", "model": "orders.order"},
+        {"name": "Мастера", "model": "masters.masterprofile"},
+        {"name": "Заявки на пакеты", "model": "billing.packagepurchase"},
+    ],
+    "icons": {
+        "accounts.User": "fas fa-user",
+        "masters.MasterProfile": "fas fa-user-gear",
+        "masters.ServiceCategory": "fas fa-list",
+        "orders.Order": "fas fa-clipboard-list",
+        "billing.Package": "fas fa-box",
+        "billing.MasterSubscription": "fas fa-id-card",
+        "billing.PackagePurchase": "fas fa-receipt",
+        "chat.ChatRoom": "fas fa-comments",
+        "reviews.Review": "fas fa-star",
+        "support.SupportCase": "fas fa-headset",
+        "notifications.NotificationEvent": "fas fa-bell",
+        "notifications.DeviceToken": "fas fa-mobile-screen",
+    },
+    "order_with_respect_to": ["orders", "masters", "billing", "chat", "reviews", "support", "accounts"],
+    "changeform_format": "horizontal_tabs",
+    "related_modal_active": True,
+}
+
+JAZZMIN_UI_TWEAKS = {
+    "theme": "flatly",
+    "dark_mode_theme": "darkly",
+    "navbar": "navbar-dark",
+    "navbar_fixed": True,
+    "sidebar_fixed": True,
+    "sidebar": "sidebar-dark-primary",
+    "brand_colour": "navbar-primary",
+    "accent": "accent-primary",
+    "button_classes": {
+        "primary": "btn-primary",
+        "success": "btn-success",
+        "danger": "btn-danger",
+    },
+}

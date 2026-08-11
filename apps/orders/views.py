@@ -1,7 +1,6 @@
 from django.db import transaction
 from rest_framework import decorators, response, status, viewsets
 
-from apps.billing.services import consume_order_from_package
 from apps.chat.services import get_or_create_order_room
 from apps.masters.models import MasterProfile
 
@@ -20,6 +19,7 @@ from .services import (
     OrderActionError,
     accept_master_offer,
     accept_price,
+    client_reject_master,
     decline_master_offer,
     expire_master_offer,
     match_open_orders,
@@ -150,6 +150,24 @@ class OrderViewSet(viewsets.ModelViewSet):
         order = accept_price(proposal, request.user)
         return response.Response({"order": OrderSerializer(order).data})
 
+    @decorators.action(detail=True, methods=["post"], url_path="reject-master")
+    def reject_master(self, request, pk=None):
+        order = self.get_object()
+        denied = self._require_client(request, order)
+        if denied is not None:
+            return denied
+        try:
+            result = client_reject_master(order, actor=request.user)
+        except OrderActionError as error:
+            return response.Response({"code": error.code}, status=status.HTTP_400_BAD_REQUEST)
+        return response.Response(
+            {
+                "code": "operator_search" if result.exhausted else "rematching",
+                "needs_operator": result.order.needs_operator,
+                "order": OrderSerializer(result.order).data,
+            }
+        )
+
     @decorators.action(detail=True, methods=["post"], url_path="reject-price")
     def reject_latest_price(self, request, pk=None):
         order = self.get_object()
@@ -179,6 +197,70 @@ class OrderViewSet(viewsets.ModelViewSet):
         )
         return response.Response({"order": OrderSerializer(order).data})
 
+    @decorators.action(detail=True, methods=["get"], url_path="track")
+    def track(self, request, pk=None):
+        """The master's recorded route for this order (TZ §6.1), oldest first —
+        used to draw the travelled path on the completed order screen."""
+        order = self.get_object()
+        pings = order.master_pings.order_by("created_at").values(
+            "latitude", "longitude", "created_at"
+        )
+        points = [
+            {
+                "latitude": float(p["latitude"]),
+                "longitude": float(p["longitude"]),
+                "created_at": p["created_at"].isoformat(),
+            }
+            for p in pings
+        ]
+        return response.Response({"points": points, "count": len(points)})
+
+    @decorators.action(detail=True, methods=["post"], url_path="onsite-price")
+    def onsite_price(self, request, pk=None):
+        """Master fixes the exact price on site after inspecting the job (TZ §5.4).
+        Updates the agreed price so the client sees it before work starts."""
+        order = self.get_object()
+        _, denied = self._require_assigned_master(request, order)
+        if denied is not None:
+            return denied
+        raw_price = request.data.get("agreed_price_uzs")
+        try:
+            amount = int(raw_price)
+        except (TypeError, ValueError):
+            return response.Response({"code": "invalid_price"}, status=status.HTTP_400_BAD_REQUEST)
+        if amount <= 0:
+            return response.Response({"code": "invalid_price"}, status=status.HTTP_400_BAD_REQUEST)
+        order.agreed_price_uzs = amount
+        order.save(update_fields=["agreed_price_uzs", "updated_at"])
+        return response.Response({"order": OrderSerializer(order).data})
+
+    @decorators.action(detail=True, methods=["post"], url_path="work-report")
+    def work_report(self, request, pk=None):
+        """Master submits the result of the job: photos of the finished work and
+        the actual amount charged. Stored before the client confirms, so the
+        completion photos and declared sum are persisted (TZ §6.3)."""
+        order = self.get_object()
+        _, denied = self._require_assigned_master(request, order)
+        if denied is not None:
+            return denied
+        files = request.FILES.getlist("attachments[]") or request.FILES.getlist("attachments")
+        for attachment in files:
+            OrderAttachment.objects.create(order=order, file=attachment)
+        update_fields = ["updated_at"]
+        raw_price = request.data.get("final_price_uzs")
+        if raw_price not in (None, ""):
+            try:
+                order.final_price_uzs = int(raw_price)
+                update_fields.append("final_price_uzs")
+            except (TypeError, ValueError):
+                return response.Response(
+                    {"code": "invalid_final_price"}, status=status.HTTP_400_BAD_REQUEST
+                )
+        order.save(update_fields=update_fields)
+        return response.Response(
+            {"order": OrderSerializer(order).data, "attachments_added": len(files)}
+        )
+
     @decorators.action(detail=True, methods=["post"])
     @transaction.atomic
     def complete(self, request, pk=None):
@@ -192,11 +274,24 @@ class OrderViewSet(viewsets.ModelViewSet):
             return response.Response({"code": "order_not_ready_for_completion"}, status=status.HTTP_400_BAD_REQUEST)
         order.final_price_uzs = serializer.validated_data["final_price_uzs"]
         order.payment_method = serializer.validated_data["payment_method"]
-        order.save(update_fields=["final_price_uzs", "payment_method", "updated_at"])
+        # Flag big divergence from the agreed price for operator review (>30%).
+        agreed = order.agreed_price_uzs
+        final = order.final_price_uzs
+        divergence_flagged = False
+        if agreed and final and abs(final - agreed) / agreed > 0.30:
+            order.needs_operator = True
+            divergence_flagged = True
+        order.save(update_fields=["final_price_uzs", "payment_method", "needs_operator", "updated_at"])
+        # The order slot is already debited at acceptance (subscription model);
+        # nothing is charged again on completion.
         if order.status == OrderStatus.WORK_DONE:
-            order = transition_order(order, OrderStatus.COMPLETED, actor=request.user, reason="client_confirmed")
-        if order.master and hasattr(order.master, "wallet"):
-            consume_order_from_package(order.master.wallet, note=f"Order {order.id} completed")
+            order = transition_order(
+                order,
+                OrderStatus.COMPLETED,
+                actor=request.user,
+                reason="client_confirmed",
+                metadata={"price_divergence_flagged": divergence_flagged},
+            )
         match_open_orders()
         return response.Response({"order": OrderSerializer(order).data})
 

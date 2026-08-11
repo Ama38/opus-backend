@@ -1,14 +1,61 @@
-from rest_framework import decorators, response, viewsets
+from rest_framework import decorators, permissions, response, status, viewsets
 
-from apps.masters.models import MasterProfile
 from apps.masters.services import get_or_create_master_profile
 
-from .models import MasterWallet
-from .serializers import MasterWalletSerializer, WalletTopUpSerializer
-from .services import top_up_wallet
+from .models import MasterWallet, Package
+from .serializers import (
+    MasterSubscriptionSerializer,
+    MasterWalletSerializer,
+    PackagePurchaseSerializer,
+    PackageSerializer,
+    WalletTopUpSerializer,
+)
+from .services import get_or_create_subscription, request_package, top_up_wallet
+
+
+class PackageViewSet(viewsets.ReadOnlyModelViewSet):
+    """Catalog of subscription packages (admin-configurable)."""
+
+    serializer_class = PackageSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    queryset = Package.objects.filter(is_active=True)
+
+
+class SubscriptionViewSet(viewsets.ViewSet):
+    permission_classes = [permissions.IsAuthenticated]
+
+    @decorators.action(detail=False, methods=["get"], url_path="me")
+    def me(self, request):
+        profile = get_or_create_master_profile(request.user)
+        subscription = get_or_create_subscription(profile)
+        purchases = profile.package_purchases.all()[:20]
+        return response.Response(
+            {
+                "subscription": MasterSubscriptionSerializer(subscription).data,
+                "history": PackagePurchaseSerializer(purchases, many=True).data,
+            }
+        )
+
+    @decorators.action(detail=False, methods=["post"], url_path="request-package")
+    def request_package_action(self, request):
+        profile = get_or_create_master_profile(request.user)
+        package = Package.objects.filter(id=request.data.get("package_id"), is_active=True).first()
+        if package is None:
+            return response.Response({"code": "package_not_found"}, status=status.HTTP_404_NOT_FOUND)
+        purchase = request_package(profile, package, actor=request.user)
+        subscription = get_or_create_subscription(profile)
+        return response.Response(
+            {
+                "purchase": PackagePurchaseSerializer(purchase).data,
+                "subscription": MasterSubscriptionSerializer(subscription).data,
+            },
+            status=status.HTTP_201_CREATED,
+        )
 
 
 class MasterWalletViewSet(viewsets.ReadOnlyModelViewSet):
+    """Deprecated money wallet (kept for backwards compatibility)."""
+
     serializer_class = MasterWalletSerializer
 
     def get_queryset(self):

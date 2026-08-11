@@ -49,6 +49,8 @@ class Order(models.Model):
     longitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
     scheduled_at = models.DateTimeField(null=True, blank=True)
     budget_ceiling_uzs = models.PositiveIntegerField(null=True, blank=True)
+    # Client doesn't mind the price and is happy for the master to estimate on site.
+    price_flexible = models.BooleanField(default=False)
 
     agreed_price_uzs = models.PositiveIntegerField(null=True, blank=True)
     final_price_uzs = models.PositiveIntegerField(null=True, blank=True)
@@ -56,6 +58,11 @@ class Order(models.Model):
 
     cancellation_reason = models.CharField(max_length=64, choices=OrderCancelReason.choices, blank=True)
     cancellation_comment = models.TextField(blank=True)
+
+    # How many times the client asked for a different master on this order. After
+    # the configured threshold the order is routed to an operator.
+    client_refusals = models.PositiveSmallIntegerField(default=0)
+    needs_operator = models.BooleanField(default=False)
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

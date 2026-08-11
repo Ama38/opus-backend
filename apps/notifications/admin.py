@@ -1,6 +1,14 @@
 from django.contrib import admin
 
-from .models import NotificationEvent, NotificationStatus
+from .models import DeviceToken, NotificationEvent, NotificationStatus
+
+
+@admin.register(DeviceToken)
+class DeviceTokenAdmin(admin.ModelAdmin):
+    list_display = ["user", "platform", "is_active", "updated_at"]
+    list_filter = ["platform", "is_active", "updated_at"]
+    search_fields = ["user__phone", "user__full_name", "token"]
+    readonly_fields = ["created_at", "updated_at"]
 
 
 @admin.register(NotificationEvent)
