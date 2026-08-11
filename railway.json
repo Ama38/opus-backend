@@ -5,7 +5,6 @@
     "dockerfilePath": "Dockerfile"
   },
   "deploy": {
-    "startCommand": "sh -c 'python manage.py migrate --noinput && python manage.py collectstatic --noinput && python manage.py seed_categories && python manage.py seed_packages && exec uvicorn config.asgi:application --host 0.0.0.0 --port ${PORT:-8000}'",
     "healthcheckPath": "/api/health/",
     "healthcheckTimeout": 180,
     "restartPolicyType": "ON_FAILURE",
