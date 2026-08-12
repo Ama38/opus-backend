@@ -308,6 +308,16 @@ def create_order_notifications(order: Order, from_status: str, to_status: str, r
             "Natijani tekshiring va buyurtmani yakunlang.",
             payload,
         )
+        # Tray push so the client comes back to confirm + rate even if the app
+        # was backgrounded/killed (otherwise the review prompt is missed).
+        _push_client_update(
+            order,
+            title_ru="Работа выполнена",
+            title_uz="Ish bajarildi",
+            body_ru="Подтвердите завершение и оцените мастера.",
+            body_uz="Yakunlashni tasdiqlang va ustani baholang.",
+            event="order.work_done",
+        )
         return
 
     if to_status == OrderStatus.COMPLETED:
@@ -402,6 +412,41 @@ def _push_incoming_offer(order: Order) -> None:
             },
             channel_id="incoming_orders",
             sound="incoming_call",
+        )
+    except Exception:  # pragma: no cover - push must never break the order flow
+        pass
+
+
+def _push_client_update(
+    order: Order,
+    *,
+    title_ru: str,
+    title_uz: str,
+    body_ru: str,
+    body_uz: str,
+    event: str,
+) -> None:
+    """Send a normal tray push to the client for an order status update. Unlike
+    the master's ringing incoming-order alert, this shows up in the tray via the
+    notification block so the client is reliably pulled back into the flow even
+    when the app is backgrounded or killed."""
+    from apps.notifications.push import send_push_to_user
+
+    client = order.client
+    is_uzbek = getattr(client, "language", "ru") == "uz"
+    try:
+        send_push_to_user(
+            client,
+            title=title_uz if is_uzbek else title_ru,
+            body=body_uz if is_uzbek else body_ru,
+            data={
+                "event": event,
+                "type": event,
+                "order_id": str(order.id),
+            },
+            channel_id="order_updates",
+            sound="default",
+            include_notification=True,
         )
     except Exception:  # pragma: no cover - push must never break the order flow
         pass
