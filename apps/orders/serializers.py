@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from apps.masters.models import ServiceCategory
+from apps.masters.models import MasterProfile, ServiceCategory
 from apps.masters.serializers import ServiceCategorySerializer
 
 from .models import (
@@ -38,6 +38,14 @@ class OrderSerializer(serializers.ModelSerializer):
         source="category",
         write_only=True,
     )
+    # Optional: the master the client picked from the directory (direct offer).
+    preferred_master_id = serializers.PrimaryKeyRelatedField(
+        queryset=MasterProfile.objects.all(),
+        source="preferred_master",
+        write_only=True,
+        required=False,
+        allow_null=True,
+    )
     client_phone = serializers.CharField(source="client.phone", read_only=True)
     master_id = serializers.IntegerField(source="master.id", read_only=True)
     master_name = serializers.CharField(source="master.user.full_name", read_only=True)
@@ -65,6 +73,7 @@ class OrderSerializer(serializers.ModelSerializer):
             "master_phone",
             "category",
             "category_id",
+            "preferred_master_id",
             "status",
             "description",
             "address_text",

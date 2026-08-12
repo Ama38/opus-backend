@@ -130,3 +130,43 @@ class MasterPortfolioItem(models.Model):
     def __str__(self) -> str:
         return f"{self.master} portfolio #{self.pk}"
 
+
+class MasterPortfolioPost(models.Model):
+    """An Instagram-style portfolio post: a titled, described gallery of work
+    photos the master publishes so clients can judge their quality."""
+
+    master = models.ForeignKey(
+        MasterProfile, on_delete=models.CASCADE, related_name="portfolio_posts"
+    )
+    category = models.ForeignKey(
+        ServiceCategory,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="portfolio_posts",
+    )
+    title = models.CharField(max_length=120, blank=True)
+    description = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self) -> str:
+        return f"{self.master} post #{self.pk}: {self.title}"
+
+
+class MasterPortfolioPostImage(models.Model):
+    post = models.ForeignKey(
+        MasterPortfolioPost, on_delete=models.CASCADE, related_name="images"
+    )
+    image = models.ImageField(upload_to="portfolio/")
+    sort_order = models.PositiveSmallIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["sort_order", "id"]
+
+    def __str__(self) -> str:
+        return f"{self.post_id} image #{self.pk}"
+

@@ -7,6 +7,8 @@ from apps.orders.services import match_open_orders
 from .models import (
     MasterCategoryPrice,
     MasterPortfolioItem,
+    MasterPortfolioPost,
+    MasterPortfolioPostImage,
     MasterProfile,
     MasterServiceStatus,
     MasterStatus,
@@ -17,6 +19,7 @@ from .serializers import (
     MasterCategoryPriceSerializer,
     MasterLocationSerializer,
     MasterPortfolioItemSerializer,
+    MasterPortfolioPostSerializer,
     MasterProfileSerializer,
     MasterPublicSerializer,
     ServiceCategorySerializer,
@@ -48,6 +51,27 @@ class MasterPortfolioViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         profile = get_or_create_master_profile(self.request.user)
         serializer.save(master=profile)
+
+
+class MasterPortfolioPostViewSet(viewsets.ModelViewSet):
+    """Instagram-style portfolio posts: a titled, described gallery. Create with
+    multipart (title, description, category, images[]); list/delete own posts."""
+
+    serializer_class = MasterPortfolioPostSerializer
+
+    def get_queryset(self):
+        return (
+            MasterPortfolioPost.objects.filter(master__user=self.request.user)
+            .select_related("category")
+            .prefetch_related("images")
+        )
+
+    def perform_create(self, serializer):
+        profile = get_or_create_master_profile(self.request.user)
+        post = serializer.save(master=profile)
+        images = self.request.FILES.getlist("images[]") or self.request.FILES.getlist("images")
+        for index, image in enumerate(images):
+            MasterPortfolioPostImage.objects.create(post=post, image=image, sort_order=index)
 
 
 class MasterServiceViewSet(viewsets.ModelViewSet):

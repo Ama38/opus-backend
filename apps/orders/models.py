@@ -41,6 +41,15 @@ class Order(models.Model):
         related_name="orders",
     )
     category = models.ForeignKey("masters.ServiceCategory", on_delete=models.PROTECT, related_name="orders")
+    # Client picked a specific master from the directory: they get the first
+    # (direct) offer; if they decline/expire, matching falls back to normal.
+    preferred_master = models.ForeignKey(
+        "masters.MasterProfile",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="preferred_orders",
+    )
     status = models.CharField(max_length=32, choices=OrderStatus.choices, default=OrderStatus.DRAFT)
 
     description = models.TextField(blank=True)

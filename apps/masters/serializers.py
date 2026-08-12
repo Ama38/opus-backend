@@ -2,7 +2,14 @@ from rest_framework import serializers
 
 from apps.billing.models import MasterWallet
 
-from .models import MasterCategoryPrice, MasterPortfolioItem, MasterProfile, ServiceCategory
+from .models import (
+    MasterCategoryPrice,
+    MasterPortfolioItem,
+    MasterPortfolioPost,
+    MasterPortfolioPostImage,
+    MasterProfile,
+    ServiceCategory,
+)
 
 
 class MasterPortfolioItemSerializer(serializers.ModelSerializer):
@@ -21,6 +28,40 @@ class MasterPortfolioItemSerializer(serializers.ModelSerializer):
         request = self.context.get("request")
         url = obj.image.url
         return request.build_absolute_uri(url) if request is not None else url
+
+
+class MasterPortfolioPostImageSerializer(serializers.ModelSerializer):
+    image_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = MasterPortfolioPostImage
+        fields = ["id", "image_url", "sort_order"]
+
+    def get_image_url(self, obj) -> str:
+        if not obj.image:
+            return ""
+        request = self.context.get("request")
+        url = obj.image.url
+        return request.build_absolute_uri(url) if request is not None else url
+
+
+class MasterPortfolioPostSerializer(serializers.ModelSerializer):
+    images = MasterPortfolioPostImageSerializer(many=True, read_only=True)
+    category_slug = serializers.CharField(source="category.slug", read_only=True, default=None)
+
+    class Meta:
+        model = MasterPortfolioPost
+        fields = [
+            "id",
+            "title",
+            "description",
+            "category",
+            "category_slug",
+            "images",
+            "created_at",
+        ]
+        read_only_fields = ["created_at", "images"]
+        extra_kwargs = {"category": {"required": False}}
 
 
 class ServiceCategorySerializer(serializers.ModelSerializer):
@@ -161,6 +202,7 @@ class MasterPublicSerializer(serializers.ModelSerializer):
     effective_rating = serializers.SerializerMethodField()
     categories = serializers.SerializerMethodField()
     portfolio = serializers.SerializerMethodField()
+    portfolio_posts = serializers.SerializerMethodField()
     rank_change = serializers.SerializerMethodField()
     approx_latitude = serializers.SerializerMethodField()
     approx_longitude = serializers.SerializerMethodField()
@@ -178,10 +220,34 @@ class MasterPublicSerializer(serializers.ModelSerializer):
             "is_online",
             "categories",
             "portfolio",
+            "portfolio_posts",
             "leaderboard_rank",
             "rank_change",
             "approx_latitude",
             "approx_longitude",
+        ]
+
+    def get_portfolio_posts(self, obj) -> list:
+        request = self.context.get("request")
+
+        def _abs(url: str) -> str:
+            return request.build_absolute_uri(url) if request is not None else url
+
+        posts = obj.portfolio_posts.prefetch_related("images").all()[:20]
+        return [
+            {
+                "id": post.id,
+                "title": post.title,
+                "description": post.description,
+                "category_slug": post.category.slug if post.category else None,
+                "images": [
+                    {"id": img.id, "image_url": _abs(img.image.url), "sort_order": img.sort_order}
+                    for img in post.images.all()
+                    if img.image
+                ],
+                "created_at": post.created_at.isoformat(),
+            }
+            for post in posts
         ]
 
     def get_rank_change(self, obj):

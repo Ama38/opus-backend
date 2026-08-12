@@ -2,11 +2,26 @@ from django.contrib import admin
 
 from .models import (
     MasterCategoryPrice,
+    MasterPortfolioPost,
+    MasterPortfolioPostImage,
     MasterProfile,
     MasterServiceStatus,
     MasterStatus,
     ServiceCategory,
 )
+
+
+class MasterPortfolioPostImageInline(admin.TabularInline):
+    model = MasterPortfolioPostImage
+    extra = 1
+
+
+@admin.register(MasterPortfolioPost)
+class MasterPortfolioPostAdmin(admin.ModelAdmin):
+    list_display = ["master", "title", "category", "created_at"]
+    list_filter = ["category", "created_at"]
+    search_fields = ["master__user__full_name", "title"]
+    inlines = [MasterPortfolioPostImageInline]
 
 
 @admin.register(MasterCategoryPrice)

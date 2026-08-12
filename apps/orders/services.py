@@ -49,7 +49,13 @@ ALLOWED_TRANSITIONS: dict[str, set[str]] = {
         OrderStatus.EXPIRED,
     },
     OrderStatus.ACCEPTED_BY_MASTER: {OrderStatus.PRICE_PROPOSED, OrderStatus.SEARCHING, OrderStatus.CANCELLED},
-    OrderStatus.PRICE_PROPOSED: {OrderStatus.PRICE_ACCEPTED, OrderStatus.SEARCHING, OrderStatus.CANCELLED},
+    OrderStatus.PRICE_PROPOSED: {
+        OrderStatus.PRICE_ACCEPTED,
+        # Client asked to bargain: drop back to chat so the master can re-propose.
+        OrderStatus.ACCEPTED_BY_MASTER,
+        OrderStatus.SEARCHING,
+        OrderStatus.CANCELLED,
+    },
     OrderStatus.PRICE_ACCEPTED: {OrderStatus.MASTER_ON_WAY, OrderStatus.CANCELLED, OrderStatus.DISPUTED},
     OrderStatus.MASTER_ON_WAY: {OrderStatus.MASTER_ARRIVED, OrderStatus.CANCELLED, OrderStatus.DISPUTED},
     OrderStatus.MASTER_ARRIVED: {OrderStatus.IN_PROGRESS, OrderStatus.CANCELLED, OrderStatus.DISPUTED},
@@ -213,6 +219,31 @@ def create_order_notifications(order: Order, from_status: str, to_status: str, r
             "Заявка снова в поиске.",
             "Buyurtma yana qidiruvda.",
             payload,
+        )
+        return
+
+    if (
+        to_status == OrderStatus.ACCEPTED_BY_MASTER
+        and from_status == OrderStatus.PRICE_PROPOSED
+        and order.master_id
+    ):
+        # Client pressed "Торг": ask the master to propose a new price.
+        _notify(
+            order.master.user,
+            "order.price_bargain",
+            "Клиент предлагает торг",
+            "Mijoz savdolashishni taklif qilmoqda",
+            "Клиент просит другую цену — предложите новую.",
+            "Mijoz boshqa narx so‘rayapti — yangi narx taklif qiling.",
+            payload,
+        )
+        _push_client_update(
+            order,
+            title_ru="Торг",
+            title_uz="Savdolashuv",
+            body_ru="Мы попросили мастера предложить новую цену.",
+            body_uz="Ustadan yangi narx taklif qilishini so‘radik.",
+            event="order.price_bargain",
         )
         return
 
@@ -801,6 +832,42 @@ def offer_order_to_best_master(order: Order, radius_km: int = MATCHING_RADII_KM[
     return offer
 
 
+def _offer_to_preferred_master(order: Order) -> MasterOffer | None:
+    """Direct offer to the master the client picked from the directory. Skipped
+    if they were already offered this order (so a decline/expire falls through to
+    normal matching), or if they can't currently take it."""
+    master = order.preferred_master
+    if master is None:
+        return None
+    if order.master_offers.filter(master=master).exists():
+        return None
+    if not master_can_receive_orders(master):
+        return None
+    if not master.category_prices.filter(
+        category=order.category, is_active=True, status="approved"
+    ).exists():
+        return None
+
+    offer = MasterOffer.objects.create(
+        order=order,
+        master=master,
+        score=1.0,
+        radius_km=0,
+        expires_at=timezone.now() + timedelta(seconds=MASTER_OFFER_TTL_SECONDS),
+    )
+    order.master = master
+    order.save(update_fields=["master", "updated_at"])
+    transition_order(
+        order,
+        OrderStatus.OFFERED_TO_MASTER,
+        reason="preferred_master_offer",
+        metadata={"preferred": True},
+    )
+    _broadcast_master_offer_event(offer, "offer")
+    schedule_offer_expiration(offer)
+    return offer
+
+
 @transaction.atomic
 def match_order_with_radius_expansion(order: Order, start_radius_km: int = MATCHING_RADII_KM[0]) -> MatchAttemptResult:
     expire_stale_master_offers()
@@ -820,6 +887,12 @@ def match_order_with_radius_expansion(order: Order, start_radius_km: int = MATCH
 
     if order.status == OrderStatus.DRAFT:
         transition_order(order, OrderStatus.SEARCHING, reason="matching_started")
+
+    # Client picked a specific master: give them the first (direct) offer. If
+    # they already had an offer (declined/expired), fall through to normal match.
+    preferred_offer = _offer_to_preferred_master(order)
+    if preferred_offer is not None:
+        return MatchAttemptResult(order=order, offer=preferred_offer, attempted_radii_km=(0,))
 
     start_index = MATCHING_RADII_KM.index(start_radius_km)
     attempted_radii = MATCHING_RADII_KM[start_index:]
@@ -959,3 +1032,20 @@ def reject_price(proposal: PriceProposal, actor) -> Order:
     proposal.save(update_fields=["status", "responded_at"])
     order = proposal.order
     return transition_order(order, OrderStatus.CANCELLED, actor=actor, reason="price_rejected")
+
+
+@transaction.atomic
+def bargain_price(proposal: PriceProposal, actor) -> Order:
+    """Client wants to negotiate: mark the current proposal rejected but keep the
+    order alive by dropping it back to chat (ACCEPTED_BY_MASTER), so the master
+    can propose a new price. This is the "Торг" action — it must NOT cancel."""
+    proposal.status = PriceProposalStatus.REJECTED
+    proposal.responded_at = timezone.now()
+    proposal.save(update_fields=["status", "responded_at"])
+    order = proposal.order
+    return transition_order(
+        order,
+        OrderStatus.ACCEPTED_BY_MASTER,
+        actor=actor,
+        reason="price_bargain",
+    )
