@@ -402,7 +402,10 @@ def _push_incoming_offer(order: Order) -> None:
             },
             channel_id="incoming_orders",
             sound="incoming_call",
-            include_notification=True,
+            # Android handles this data payload in a native messaging service
+            # so it can attach a full-screen intent. An FCM notification block
+            # would be consumed by SystemUI before that service can run.
+            include_notification=False,
         )
     except Exception:  # pragma: no cover - push must never break the order flow
         pass

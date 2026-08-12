@@ -140,7 +140,7 @@ class OrderFlowTests(TestCase):
         )
 
     @patch("apps.notifications.push.send_push_to_user")
-    def test_order_offer_push_includes_system_notification_for_closed_app(self, send_push):
+    def test_order_offer_push_uses_data_for_native_full_screen_alert(self, send_push):
         self.order.master = self.master
         self.order.status = OrderStatus.OFFERED_TO_MASTER
         self.order.save(update_fields=["master", "status", "updated_at"])
@@ -157,7 +157,7 @@ class OrderFlowTests(TestCase):
         self.assertEqual(kwargs["data"]["order_id"], str(self.order.id))
         self.assertEqual(kwargs["channel_id"], "incoming_orders")
         self.assertEqual(kwargs["sound"], "incoming_call")
-        self.assertIs(kwargs["include_notification"], True)
+        self.assertIs(kwargs["include_notification"], False)
 
     @override_settings(
         STORAGES={

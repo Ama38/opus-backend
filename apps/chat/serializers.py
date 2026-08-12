@@ -38,6 +38,9 @@ class ChatMessageCreateSerializer(serializers.Serializer):
     kind = serializers.ChoiceField(choices=[MessageKind.TEXT, MessageKind.PHOTO, MessageKind.VIDEO], default=MessageKind.TEXT)
     text = serializers.CharField(required=False, allow_blank=True)
     attachment_url = serializers.URLField(required=False, allow_blank=True)
+    # Correlates the sender's optimistic UI item with the persisted message.
+    # It is intentionally transient: the server UUID remains the source of truth.
+    client_message_id = serializers.CharField(required=False, allow_blank=True, max_length=80)
     # Direct multipart upload of the photo/video; the view stores it and fills
     # attachment_url from the saved file.
     attachment = serializers.FileField(required=False, write_only=True)
