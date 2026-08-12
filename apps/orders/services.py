@@ -402,6 +402,7 @@ def _push_incoming_offer(order: Order) -> None:
             },
             channel_id="incoming_orders",
             sound="incoming_call",
+            include_notification=True,
         )
     except Exception:  # pragma: no cover - push must never break the order flow
         pass

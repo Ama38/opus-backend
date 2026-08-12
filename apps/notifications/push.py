@@ -104,10 +104,8 @@ def send_push_to_user(
     if not tokens:
         return 0
 
-    # Data-only, high-priority message: the app's background isolate builds the
-    # full-screen "incoming call" notification itself (Yandex-style), so title,
-    # body, sound and channel travel inside the data payload. Data-only also
-    # guarantees the Dart background handler runs even when the app is killed.
+    # Keep display fields in data as well so the app can build a richer local
+    # notification while it is running and route a tap to the relevant order.
     string_data = {str(k): str(v) for k, v in (data or {}).items()}
     string_data.update(
         {
@@ -118,13 +116,20 @@ def send_push_to_user(
         }
     )
 
-    android = messaging.AndroidConfig(priority="high")
-
-    # Reminders/info pushes carry a notification block so Android shows them in
-    # the tray automatically (no full-screen isolate needed). Order offers stay
-    # data-only so the ringing isolate always runs.
+    # A notification block lets Android display the push itself while the app
+    # process is backgrounded or terminated. Data-only delivery is best-effort
+    # in those states and is not sufficient for time-sensitive order offers.
     notification = (
         messaging.Notification(title=title, body=body) if include_notification else None
+    )
+    android_notification = (
+        messaging.AndroidNotification(channel_id=channel_id, sound=sound)
+        if include_notification
+        else None
+    )
+    android = messaging.AndroidConfig(
+        priority="high",
+        notification=android_notification,
     )
 
     sent = 0
