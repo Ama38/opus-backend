@@ -1,5 +1,6 @@
 from decimal import Decimal
 from datetime import timedelta
+from unittest.mock import patch
 
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
@@ -24,6 +25,7 @@ from apps.orders.services import (
     OrderActionError,
     accept_master_offer,
     accept_price,
+    create_order_notifications,
     expire_master_offer,
     match_order_with_radius_expansion,
     offer_order_to_best_master,
@@ -136,6 +138,26 @@ class OrderFlowTests(TestCase):
         self.assertTrue(
             NotificationEvent.objects.filter(user=self.client, event_type="order.master_on_way").exists()
         )
+
+    @patch("apps.notifications.push.send_push_to_user")
+    def test_order_offer_push_uses_data_for_native_full_screen_alert(self, send_push):
+        self.order.master = self.master
+        self.order.status = OrderStatus.OFFERED_TO_MASTER
+        self.order.save(update_fields=["master", "status", "updated_at"])
+
+        create_order_notifications(
+            self.order,
+            OrderStatus.SEARCHING,
+            OrderStatus.OFFERED_TO_MASTER,
+        )
+
+        send_push.assert_called_once()
+        _, kwargs = send_push.call_args
+        self.assertEqual(kwargs["data"]["event"], "order.offered")
+        self.assertEqual(kwargs["data"]["order_id"], str(self.order.id))
+        self.assertEqual(kwargs["channel_id"], "incoming_orders")
+        self.assertEqual(kwargs["sound"], "incoming_call")
+        self.assertIs(kwargs["include_notification"], False)
 
     @override_settings(
         STORAGES={

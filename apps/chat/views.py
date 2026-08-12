@@ -68,6 +68,9 @@ class ChatMessageViewSet(viewsets.ReadOnlyModelViewSet):
             attachment_url=attachment_url,
         )
         payload = json.loads(JSONRenderer().render(self.get_serializer(message).data))
+        client_message_id = serializer.validated_data.get("client_message_id", "")
+        if client_message_id:
+            payload["client_message_id"] = client_message_id
         channel_layer = get_channel_layer()
         async_to_sync(channel_layer.group_send)(
             f"chat_{room.id}",
