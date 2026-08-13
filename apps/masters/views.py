@@ -1,4 +1,5 @@
 from django.conf import settings
+from django.db import transaction
 from django.utils import timezone
 from rest_framework import decorators, permissions, response, status as http_status, viewsets
 
@@ -7,6 +8,8 @@ from apps.orders.services import match_open_orders
 from .models import (
     MasterCategoryPrice,
     MasterPortfolioItem,
+    MasterPortfolioPost,
+    MasterPortfolioPostImage,
     MasterProfile,
     MasterServiceStatus,
     MasterStatus,
@@ -17,6 +20,7 @@ from .serializers import (
     MasterCategoryPriceSerializer,
     MasterLocationSerializer,
     MasterPortfolioItemSerializer,
+    MasterPortfolioPostSerializer,
     MasterProfileSerializer,
     MasterPublicSerializer,
     ServiceCategorySerializer,
@@ -48,6 +52,59 @@ class MasterPortfolioViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         profile = get_or_create_master_profile(self.request.user)
         serializer.save(master=profile)
+
+
+class MasterPortfolioPostViewSet(viewsets.ModelViewSet):
+    """The signed-in master's titled portfolio posts with ordered galleries."""
+
+    serializer_class = MasterPortfolioPostSerializer
+
+    def get_queryset(self):
+        return (
+            MasterPortfolioPost.objects.filter(master__user=self.request.user)
+            .select_related("category")
+            .prefetch_related("images")
+        )
+
+    @transaction.atomic
+    def create(self, request, *args, **kwargs):
+        images = request.FILES.getlist("images[]") or request.FILES.getlist(
+            "images"
+        )
+        if not images:
+            return response.Response(
+                {"code": "portfolio_images_required"},
+                status=http_status.HTTP_400_BAD_REQUEST,
+            )
+        if len(images) > 10:
+            return response.Response(
+                {"code": "portfolio_images_limit", "limit": 10},
+                status=http_status.HTTP_400_BAD_REQUEST,
+            )
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        profile = get_or_create_master_profile(request.user)
+        category = serializer.validated_data.get("category")
+        if category is not None and not MasterCategoryPrice.objects.filter(
+            master=profile,
+            category=category,
+            is_active=True,
+            status=MasterServiceStatus.APPROVED,
+        ).exists():
+            return response.Response(
+                {"code": "portfolio_category_not_approved"},
+                status=http_status.HTTP_400_BAD_REQUEST,
+            )
+        post = serializer.save(master=profile)
+        for index, image in enumerate(images):
+            MasterPortfolioPostImage.objects.create(
+                post=post, image=image, sort_order=index
+            )
+        post = self.get_queryset().get(pk=post.pk)
+        return response.Response(
+            self.get_serializer(post).data,
+            status=http_status.HTTP_201_CREATED,
+        )
 
 
 class MasterServiceViewSet(viewsets.ModelViewSet):
@@ -163,7 +220,12 @@ class MasterProfileViewSet(viewsets.ModelViewSet):
         return (
             MasterProfile.objects.filter(status=MasterStatus.APPROVED)
             .select_related("user")
-            .prefetch_related("category_prices__category")
+            .prefetch_related(
+                "category_prices__category",
+                "portfolio_items",
+                "portfolio_posts__category",
+                "portfolio_posts__images",
+            )
         )
 
     @decorators.action(detail=False, methods=["get"], url_path="directory")

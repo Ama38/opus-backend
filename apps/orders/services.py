@@ -49,7 +49,12 @@ ALLOWED_TRANSITIONS: dict[str, set[str]] = {
         OrderStatus.EXPIRED,
     },
     OrderStatus.ACCEPTED_BY_MASTER: {OrderStatus.PRICE_PROPOSED, OrderStatus.SEARCHING, OrderStatus.CANCELLED},
-    OrderStatus.PRICE_PROPOSED: {OrderStatus.PRICE_ACCEPTED, OrderStatus.SEARCHING, OrderStatus.CANCELLED},
+    OrderStatus.PRICE_PROPOSED: {
+        OrderStatus.ACCEPTED_BY_MASTER,
+        OrderStatus.PRICE_ACCEPTED,
+        OrderStatus.SEARCHING,
+        OrderStatus.CANCELLED,
+    },
     OrderStatus.PRICE_ACCEPTED: {OrderStatus.MASTER_ON_WAY, OrderStatus.CANCELLED, OrderStatus.DISPUTED},
     OrderStatus.MASTER_ON_WAY: {OrderStatus.MASTER_ARRIVED, OrderStatus.CANCELLED, OrderStatus.DISPUTED},
     OrderStatus.MASTER_ARRIVED: {OrderStatus.IN_PROGRESS, OrderStatus.CANCELLED, OrderStatus.DISPUTED},
@@ -212,6 +217,31 @@ def create_order_notifications(order: Order, from_status: str, to_status: str, r
             "Boshqa ustani qidiryapmiz",
             "Заявка снова в поиске.",
             "Buyurtma yana qidiruvda.",
+            payload,
+        )
+        return
+
+    if (
+        to_status == OrderStatus.ACCEPTED_BY_MASTER
+        and reason == "price_bargain_requested"
+        and order.master_id
+    ):
+        _notify(
+            order.master.user,
+            "order.price_bargain_requested",
+            "Клиент хочет обсудить цену",
+            "Mijoz narxni muhokama qilmoqchi",
+            "Откройте чат и предложите новую фиксированную цену.",
+            "Chatni oching va yangi qatʼiy narx taklif qiling.",
+            payload,
+        )
+        _notify(
+            order.client,
+            "order.price_bargain_requested",
+            "Торг продолжен",
+            "Savdolashish davom etmoqda",
+            "Мастер получил запрос и может предложить новую цену.",
+            "Usta soʻrovni oldi va yangi narx taklif qilishi mumkin.",
             payload,
         )
         return
@@ -914,3 +944,23 @@ def reject_price(proposal: PriceProposal, actor) -> Order:
     proposal.save(update_fields=["status", "responded_at"])
     order = proposal.order
     return transition_order(order, OrderStatus.CANCELLED, actor=actor, reason="price_rejected")
+
+
+@transaction.atomic
+def bargain_price(proposal: PriceProposal, actor) -> Order:
+    """Decline one quote while keeping the assigned master and chat active."""
+    if proposal.status != PriceProposalStatus.PENDING:
+        raise OrderActionError("price_proposal_not_pending")
+    order = proposal.order
+    if order.status != OrderStatus.PRICE_PROPOSED:
+        raise OrderActionError("order_not_awaiting_price_response")
+    proposal.status = PriceProposalStatus.REJECTED
+    proposal.responded_at = timezone.now()
+    proposal.save(update_fields=["status", "responded_at"])
+    return transition_order(
+        order,
+        OrderStatus.ACCEPTED_BY_MASTER,
+        actor=actor,
+        reason="price_bargain_requested",
+        metadata={"rejected_amount_uzs": proposal.amount_uzs},
+    )

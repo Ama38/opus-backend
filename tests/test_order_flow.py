@@ -25,6 +25,7 @@ from apps.orders.services import (
     OrderActionError,
     accept_master_offer,
     accept_price,
+    bargain_price,
     create_order_notifications,
     expire_master_offer,
     match_order_with_radius_expansion,
@@ -138,6 +139,52 @@ class OrderFlowTests(TestCase):
         self.assertTrue(
             NotificationEvent.objects.filter(user=self.client, event_type="order.master_on_way").exists()
         )
+
+    def test_client_can_bargain_and_master_can_propose_again(self):
+        self.order.master = self.master
+        self.order.status = OrderStatus.ACCEPTED_BY_MASTER
+        self.order.save(update_fields=["master", "status", "updated_at"])
+        first_proposal = propose_price(self.order, self.master, 150_000)
+
+        api = APIClient()
+        api.force_authenticate(self.client)
+        response = api.post(
+            f"/api/orders/{self.order.id}/bargain-price/", {}, format="json"
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.order.refresh_from_db()
+        first_proposal.refresh_from_db()
+        self.assertEqual(self.order.status, OrderStatus.ACCEPTED_BY_MASTER)
+        self.assertEqual(first_proposal.status, PriceProposalStatus.REJECTED)
+        event = self.order.events.latest("created_at")
+        self.assertEqual(event.reason, "price_bargain_requested")
+        self.assertEqual(event.metadata["rejected_amount_uzs"], 150_000)
+        self.assertTrue(
+            NotificationEvent.objects.filter(
+                user=self.master_user,
+                event_type="order.price_bargain_requested",
+            ).exists()
+        )
+
+        second_proposal = propose_price(self.order, self.master, 135_000)
+        self.order.refresh_from_db()
+        self.assertEqual(second_proposal.status, PriceProposalStatus.PENDING)
+        self.assertEqual(self.order.status, OrderStatus.PRICE_PROPOSED)
+
+    def test_bargain_requires_a_pending_price_proposal(self):
+        self.order.master = self.master
+        self.order.status = OrderStatus.ACCEPTED_BY_MASTER
+        self.order.save(update_fields=["master", "status", "updated_at"])
+        api = APIClient()
+        api.force_authenticate(self.client)
+
+        response = api.post(
+            f"/api/orders/{self.order.id}/bargain-price/", {}, format="json"
+        )
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json()["code"], "price_proposal_not_found")
 
     @patch("apps.notifications.push.send_push_to_user")
     def test_order_offer_push_uses_data_for_native_full_screen_alert(self, send_push):

@@ -2,7 +2,14 @@ from rest_framework import serializers
 
 from apps.billing.models import MasterWallet
 
-from .models import MasterCategoryPrice, MasterPortfolioItem, MasterProfile, ServiceCategory
+from .models import (
+    MasterCategoryPrice,
+    MasterPortfolioItem,
+    MasterPortfolioPost,
+    MasterPortfolioPostImage,
+    MasterProfile,
+    ServiceCategory,
+)
 
 
 class MasterPortfolioItemSerializer(serializers.ModelSerializer):
@@ -21,6 +28,56 @@ class MasterPortfolioItemSerializer(serializers.ModelSerializer):
         request = self.context.get("request")
         url = obj.image.url
         return request.build_absolute_uri(url) if request is not None else url
+
+
+class MasterPortfolioPostImageSerializer(serializers.ModelSerializer):
+    image_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = MasterPortfolioPostImage
+        fields = ["id", "image_url", "sort_order"]
+        read_only_fields = fields
+
+    def get_image_url(self, obj) -> str:
+        if not obj.image:
+            return ""
+        request = self.context.get("request")
+        url = obj.image.url
+        return request.build_absolute_uri(url) if request is not None else url
+
+
+class MasterPortfolioPostSerializer(serializers.ModelSerializer):
+    images = MasterPortfolioPostImageSerializer(many=True, read_only=True)
+    category_slug = serializers.CharField(
+        source="category.slug", read_only=True, default=None
+    )
+
+    class Meta:
+        model = MasterPortfolioPost
+        fields = [
+            "id",
+            "title",
+            "description",
+            "category",
+            "category_slug",
+            "images",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["created_at", "updated_at"]
+        extra_kwargs = {"category": {"required": False, "allow_null": True}}
+
+    def validate_title(self, value: str) -> str:
+        value = value.strip()
+        if len(value) < 2:
+            raise serializers.ValidationError("title_too_short")
+        return value
+
+    def validate_description(self, value: str) -> str:
+        value = value.strip()
+        if len(value) < 10:
+            raise serializers.ValidationError("description_too_short")
+        return value
 
 
 class ServiceCategorySerializer(serializers.ModelSerializer):
@@ -161,6 +218,8 @@ class MasterPublicSerializer(serializers.ModelSerializer):
     effective_rating = serializers.SerializerMethodField()
     categories = serializers.SerializerMethodField()
     portfolio = serializers.SerializerMethodField()
+    portfolio_posts = MasterPortfolioPostSerializer(many=True, read_only=True)
+    face_photo_url = serializers.SerializerMethodField()
     rank_change = serializers.SerializerMethodField()
     approx_latitude = serializers.SerializerMethodField()
     approx_longitude = serializers.SerializerMethodField()
@@ -178,11 +237,19 @@ class MasterPublicSerializer(serializers.ModelSerializer):
             "is_online",
             "categories",
             "portfolio",
+            "portfolio_posts",
             "leaderboard_rank",
             "rank_change",
             "approx_latitude",
             "approx_longitude",
         ]
+
+    def get_face_photo_url(self, obj) -> str:
+        request = self.context.get("request")
+        if obj.user.avatar:
+            url = obj.user.avatar.url
+            return request.build_absolute_uri(url) if request is not None else url
+        return obj.face_photo_url or obj.user.avatar_url or ""
 
     def get_rank_change(self, obj):
         """Positions gained since the last snapshot: +N up, -N down, null if new
@@ -220,7 +287,7 @@ class MasterPublicSerializer(serializers.ModelSerializer):
         prices = [
             price
             for price in obj.category_prices.all()
-            if price.is_active and price.category is not None
+            if price.is_available and price.category is not None
         ]
         return [
             {

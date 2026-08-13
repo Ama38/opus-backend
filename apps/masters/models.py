@@ -130,3 +130,43 @@ class MasterPortfolioItem(models.Model):
     def __str__(self) -> str:
         return f"{self.master} portfolio #{self.pk}"
 
+
+class MasterPortfolioPost(models.Model):
+    """A titled portfolio entry with an ordered, multi-image gallery."""
+
+    master = models.ForeignKey(
+        MasterProfile, on_delete=models.CASCADE, related_name="portfolio_posts"
+    )
+    category = models.ForeignKey(
+        ServiceCategory,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="portfolio_posts",
+    )
+    title = models.CharField(max_length=120)
+    description = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self) -> str:
+        return f"{self.master} / {self.title}"
+
+
+class MasterPortfolioPostImage(models.Model):
+    post = models.ForeignKey(
+        MasterPortfolioPost, on_delete=models.CASCADE, related_name="images"
+    )
+    image = models.ImageField(upload_to="portfolio/posts/")
+    sort_order = models.PositiveSmallIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["sort_order", "id"]
+
+    def __str__(self) -> str:
+        return f"{self.post} image #{self.pk}"
+

@@ -1,7 +1,8 @@
 from rest_framework import decorators, response, status, viewsets
 
-from .models import SupportCase, SupportMessage
+from .models import SupportCase
 from .serializers import SupportCaseSerializer, SupportMessageCreateSerializer, SupportMessageSerializer
+from .services import add_support_message
 
 
 class SupportCaseViewSet(viewsets.ModelViewSet):
@@ -21,6 +22,10 @@ class SupportCaseViewSet(viewsets.ModelViewSet):
         case = self.get_object()
         serializer = SupportMessageCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        message = SupportMessage.objects.create(case=case, sender=request.user, text=serializer.validated_data["text"])
+        message = add_support_message(
+            case,
+            sender=request.user,
+            text=serializer.validated_data["text"],
+        )
         return response.Response({"message": SupportMessageSerializer(message).data}, status=status.HTTP_201_CREATED)
 

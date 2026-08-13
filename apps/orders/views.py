@@ -19,6 +19,7 @@ from .services import (
     OrderActionError,
     accept_master_offer,
     accept_price,
+    bargain_price,
     client_reject_master,
     decline_master_offer,
     expire_master_offer,
@@ -179,6 +180,30 @@ class OrderViewSet(viewsets.ModelViewSet):
             return response.Response({"code": "price_proposal_not_found"}, status=status.HTTP_404_NOT_FOUND)
         order = reject_price(proposal, request.user)
         match_open_orders()
+        return response.Response({"order": OrderSerializer(order).data})
+
+    @decorators.action(detail=True, methods=["post"], url_path="bargain-price")
+    def bargain_latest_price(self, request, pk=None):
+        order = self.get_object()
+        denied = self._require_client(request, order)
+        if denied is not None:
+            return denied
+        proposal = (
+            order.price_proposals.filter(status=PriceProposalStatus.PENDING)
+            .order_by("-created_at")
+            .first()
+        )
+        if proposal is None:
+            return response.Response(
+                {"code": "price_proposal_not_found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        try:
+            order = bargain_price(proposal, request.user)
+        except OrderActionError as error:
+            return response.Response(
+                {"code": error.code}, status=status.HTTP_400_BAD_REQUEST
+            )
         return response.Response({"order": OrderSerializer(order).data})
 
     @decorators.action(detail=True, methods=["post"], url_path="status")

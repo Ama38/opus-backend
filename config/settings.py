@@ -218,11 +218,12 @@ MASTERGO_MIN_MASTER_BALANCE_UZS = 40_000  # deprecated: money-balance gate repla
 # --- Subscription / packages (v3) ---
 # Days a package is valid from activation. TZ default 30; recommends 90 for launch.
 MASTERGO_PACKAGE_EXPIRY_DAYS = int(os.getenv("MASTERGO_PACKAGE_EXPIRY_DAYS", "90"))
-# Launch free period: packages are activated immediately at no cost.
-MASTERGO_FREE_PACKAGES = env_bool("MASTERGO_FREE_PACKAGES", True)
+# Optional demo mode: packages are activated immediately at no cost. Production
+# defaults to operator confirmation in Django Admin.
+MASTERGO_FREE_PACKAGES = env_bool("MASTERGO_FREE_PACKAGES", False)
 # TEST MODE: every new master is auto-approved and granted a test package so
 # they can go online without operator moderation. Set to 0 for production.
-MASTERGO_AUTO_APPROVE_MASTERS = env_bool("MASTERGO_AUTO_APPROVE_MASTERS", True)
+MASTERGO_AUTO_APPROVE_MASTERS = env_bool("MASTERGO_AUTO_APPROVE_MASTERS", False)
 
 # --- Matching (v3) ---
 MASTERGO_MATCHING_RADII_KM = (3, 7, 0)  # 0 = whole city (no distance cap)

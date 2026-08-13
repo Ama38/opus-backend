@@ -1,6 +1,26 @@
+from django import forms
 from django.contrib import admin
 
 from .models import SupportCase, SupportCaseStatus, SupportMessage
+from .services import add_support_message
+
+
+class SupportCaseAdminForm(forms.ModelForm):
+    operator_reply = forms.CharField(
+        label="Ответ клиенту/мастеру",
+        required=False,
+        widget=forms.Textarea(
+            attrs={
+                "rows": 4,
+                "placeholder": "Напишите ответ — он появится в чате приложения",
+            }
+        ),
+        help_text="Ответ сохранится как сообщение текущего оператора.",
+    )
+
+    class Meta:
+        model = SupportCase
+        fields = "__all__"
 
 
 class SupportMessageInline(admin.TabularInline):
@@ -11,6 +31,7 @@ class SupportMessageInline(admin.TabularInline):
 
 @admin.register(SupportCase)
 class SupportCaseAdmin(admin.ModelAdmin):
+    form = SupportCaseAdminForm
     list_display = ["subject", "user", "order", "status", "priority", "assigned_to", "created_at"]
     list_filter = ["status", "priority", "assigned_to", "created_at", "updated_at"]
     search_fields = ["subject", "body", "user__phone", "user__full_name", "order__id"]
@@ -23,6 +44,12 @@ class SupportCaseAdmin(admin.ModelAdmin):
         "mark_resolved",
         "mark_closed",
     ]
+
+    def save_model(self, request, obj, form, change):
+        super().save_model(request, obj, form, change)
+        reply = form.cleaned_data.get("operator_reply", "").strip()
+        if reply:
+            add_support_message(obj, sender=request.user, text=reply)
 
     @admin.action(description="Assign selected cases to me")
     def assign_to_me(self, request, queryset):
