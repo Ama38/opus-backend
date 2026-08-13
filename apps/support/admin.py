@@ -24,9 +24,16 @@ class SupportCaseAdminForm(forms.ModelForm):
 
 
 class SupportMessageInline(admin.TabularInline):
+    """Operator conversation view. Existing messages are read-only; the operator
+    types replies in the blank row(s) — sender is auto-set to the operator."""
+
     model = SupportMessage
-    extra = 0
-    readonly_fields = ["sender", "text", "created_at"]
+    extra = 1
+    fields = ["sender", "text", "created_at"]
+    readonly_fields = ["sender", "created_at"]
+
+    def has_change_permission(self, request, obj=None):
+        return False  # existing messages are immutable; only new replies allowed
 
 
 @admin.register(SupportCase)
@@ -37,6 +44,20 @@ class SupportCaseAdmin(admin.ModelAdmin):
     search_fields = ["subject", "body", "user__phone", "user__full_name", "order__id"]
     readonly_fields = ["created_at", "updated_at"]
     inlines = [SupportMessageInline]
+
+    def save_formset(self, request, form, formset, change):
+        instances = formset.save(commit=False)
+        for instance in instances:
+            if isinstance(instance, SupportMessage) and instance.sender_id is None:
+                # Operator reply: stamp the sending staff user.
+                instance.sender = request.user
+            instance.save()
+        formset.save_m2m()
+        # A reply moves the case forward if it was still just "open".
+        case = form.instance
+        if instances and case.status == SupportCaseStatus.OPEN:
+            case.status = SupportCaseStatus.IN_PROGRESS
+            case.save(update_fields=["status", "updated_at"])
     actions = [
         "assign_to_me",
         "mark_open",

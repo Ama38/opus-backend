@@ -184,6 +184,8 @@ class OrderViewSet(viewsets.ModelViewSet):
 
     @decorators.action(detail=True, methods=["post"], url_path="bargain-price")
     def bargain_latest_price(self, request, pk=None):
+        """Client wants to negotiate the proposed price ("Торг"): keep the order
+        and drop it back to chat so the master can propose a new price."""
         order = self.get_object()
         denied = self._require_client(request, order)
         if denied is not None:

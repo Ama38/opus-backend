@@ -55,7 +55,8 @@ class MasterPortfolioViewSet(viewsets.ModelViewSet):
 
 
 class MasterPortfolioPostViewSet(viewsets.ModelViewSet):
-    """The signed-in master's titled portfolio posts with ordered galleries."""
+    """Instagram-style portfolio posts: a titled, described gallery. Create with
+    multipart (title, description, category, images[]); list/delete own posts."""
 
     serializer_class = MasterPortfolioPostSerializer
 

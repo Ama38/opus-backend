@@ -177,7 +177,10 @@ STORAGES = {
     "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
     "staticfiles": {"BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage"},
 }
-MEDIA_URL = "media/"
+# Leading slash is required: without it FileField.url is a *relative* path and
+# request.build_absolute_uri() resolves it against the request path (e.g.
+# /api/media/... instead of /media/...), so avatars/attachments 404 in the apps.
+MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"

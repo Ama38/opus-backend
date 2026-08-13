@@ -132,7 +132,8 @@ class MasterPortfolioItem(models.Model):
 
 
 class MasterPortfolioPost(models.Model):
-    """A titled portfolio entry with an ordered, multi-image gallery."""
+    """An Instagram-style portfolio post: a titled, described gallery of work
+    photos the master publishes so clients can judge their quality."""
 
     master = models.ForeignKey(
         MasterProfile, on_delete=models.CASCADE, related_name="portfolio_posts"
