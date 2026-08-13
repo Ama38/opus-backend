@@ -70,6 +70,13 @@ class MasterProfile(models.Model):
         self.user.is_master_enabled = True
         self.user.save(update_fields=["is_master_enabled", "updated_at"])
         self.save(update_fields=["status", "approved_at", "updated_at"])
+        # Approving the master also approves the services he registered with, so
+        # he can actually be matched (otherwise he is online but invisible to
+        # matching, which requires an approved service). Services added *after*
+        # approval still go through their own moderation.
+        self.category_prices.filter(status=MasterServiceStatus.PENDING).update(
+            status=MasterServiceStatus.APPROVED, reject_reason=""
+        )
 
 
 class MasterServiceStatus(models.TextChoices):

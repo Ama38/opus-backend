@@ -5,6 +5,7 @@ from math import asin, cos, radians, sin, sqrt
 
 from django.conf import settings
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 
 from apps.billing.services import consume_order
@@ -32,6 +33,13 @@ MATCHING_RADII_KM = tuple(getattr(settings, "MASTERGO_MATCHING_RADII_KM", (1, 3,
 MASTER_OFFER_TTL_SECONDS = int(getattr(settings, "MASTERGO_OFFER_TTL_SECONDS", 60))
 SEARCH_ORDER_TTL_MINUTES = int(
     getattr(settings, "MASTERGO_SEARCH_ORDER_TTL_MINUTES", 30)
+)
+# After a master declines/lets an offer expire, exclude them from THIS order for
+# a cooldown, then allow re-offering. Keeps the search circling back to nearby
+# masters ("keep looking until someone accepts") instead of dead-ending once
+# everyone in range has been asked one time.
+MASTER_REOFFER_COOLDOWN_SECONDS = int(
+    getattr(settings, "MASTERGO_MASTER_REOFFER_COOLDOWN_SECONDS", 120)
 )
 _DISTANCE_SCORE_CAP_KM = 10.0
 
@@ -265,6 +273,14 @@ def create_order_notifications(order: Order, from_status: str, to_status: str, r
             order.address_text,
             payload,
         )
+        _push_client_update(
+            order,
+            title_ru="Мастер найден",
+            title_uz="Usta topildi",
+            body_ru=f"{master_name} принял заказ. Откройте чат.",
+            body_uz=f"{master_name} buyurtmani qabul qildi. Chatni oching.",
+            event="order.master_accepted",
+        )
         return
 
     if to_status == OrderStatus.PRICE_PROPOSED and order.master_id:
@@ -301,6 +317,14 @@ def create_order_notifications(order: Order, from_status: str, to_status: str, r
             "Buyurtma holatini kuzating.",
             payload,
         )
+        _push_client_update(
+            order,
+            title_ru="Мастер выехал",
+            title_uz="Usta yo‘lga chiqdi",
+            body_ru="Мастер едет к вам. Следите на карте.",
+            body_uz="Usta siz tomon yo‘lda. Xaritada kuzating.",
+            event="order.master_on_way",
+        )
         return
 
     if to_status == OrderStatus.MASTER_ARRIVED:
@@ -313,6 +337,14 @@ def create_order_notifications(order: Order, from_status: str, to_status: str, r
             order.address_text,
             payload,
         )
+        _push_client_update(
+            order,
+            title_ru="Мастер на месте",
+            title_uz="Usta yetib keldi",
+            body_ru="Мастер прибыл по адресу заказа.",
+            body_uz="Usta buyurtma manziliga yetib keldi.",
+            event="order.master_arrived",
+        )
         return
 
     if to_status == OrderStatus.IN_PROGRESS:
@@ -324,6 +356,14 @@ def create_order_notifications(order: Order, from_status: str, to_status: str, r
             "Мастер выполняет заказ.",
             "Usta buyurtmani bajaryapti.",
             payload,
+        )
+        _push_client_update(
+            order,
+            title_ru="Работа началась",
+            title_uz="Ish boshlandi",
+            body_ru="Мастер приступил к работе.",
+            body_uz="Usta ishni boshladi.",
+            event="order.in_progress",
         )
         return
 
@@ -382,6 +422,14 @@ def create_order_notifications(order: Order, from_status: str, to_status: str, r
                 "Mijoz buyurtmani bekor qildi.",
                 payload,
             )
+            _push_master_update(
+                order,
+                title_ru="Заказ отменён",
+                title_uz="Buyurtma bekor qilindi",
+                body_ru="Клиент отменил заявку.",
+                body_uz="Mijoz buyurtmani bekor qildi.",
+                event="order.cancelled",
+            )
         _notify(
             order.client,
             "order.cancelled",
@@ -390,6 +438,14 @@ def create_order_notifications(order: Order, from_status: str, to_status: str, r
             "Если нужно, создайте новую заявку.",
             "Kerak bo‘lsa, yangi buyurtma yarating.",
             payload,
+        )
+        _push_client_update(
+            order,
+            title_ru="Заказ отменён",
+            title_uz="Buyurtma bekor qilindi",
+            body_ru="Заказ отменён. При необходимости создайте новую заявку.",
+            body_uz="Buyurtma bekor qilindi. Kerak bo‘lsa, yangi buyurtma yarating.",
+            event="order.cancelled",
         )
         return
 
@@ -477,6 +533,37 @@ def _push_client_update(
                 "type": event,
                 "order_id": str(order.id),
             },
+            channel_id="order_updates",
+            sound="default",
+            include_notification=True,
+        )
+    except Exception:  # pragma: no cover - push must never break the order flow
+        pass
+
+
+def _push_master_update(
+    order: Order,
+    *,
+    title_ru: str,
+    title_uz: str,
+    body_ru: str,
+    body_uz: str,
+    event: str,
+) -> None:
+    """Normal tray push to the assigned master for an order status update
+    (e.g. the client cancelled). No-op if the order has no master."""
+    if not order.master_id:
+        return
+    from apps.notifications.push import enqueue_push_to_user
+
+    master_user = order.master.user
+    is_uzbek = getattr(master_user, "language", "ru") == "uz"
+    try:
+        enqueue_push_to_user(
+            master_user,
+            title=title_uz if is_uzbek else title_ru,
+            body=body_uz if is_uzbek else body_ru,
+            data={"event": event, "type": event, "order_id": str(order.id)},
             channel_id="order_updates",
             sound="default",
             include_notification=True,
@@ -594,9 +681,18 @@ def find_candidate_masters(order: Order, radius_km: int) -> list[MasterScore]:
     )
 
     scored: list[MasterScore] = []
-    offered_master_ids = set(order.master_offers.values_list("master_id", flat=True))
+    # Exclude masters currently holding a pending/accepted offer, and those who
+    # declined or let an offer expire within the cooldown. After the cooldown
+    # they become candidates again, so the search keeps trying nearby masters.
+    cooldown_cutoff = timezone.now() - timedelta(seconds=MASTER_REOFFER_COOLDOWN_SECONDS)
+    blocked_master_ids = set(
+        order.master_offers.filter(
+            Q(status__in=[MasterOfferStatus.PENDING, MasterOfferStatus.ACCEPTED])
+            | Q(responded_at__gte=cooldown_cutoff)
+        ).values_list("master_id", flat=True)
+    )
     for master in masters:
-        if master.id in offered_master_ids:
+        if master.id in blocked_master_ids:
             continue
         if not master_can_receive_orders(master):
             continue

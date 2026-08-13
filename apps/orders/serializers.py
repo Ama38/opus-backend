@@ -53,6 +53,7 @@ class OrderSerializer(serializers.ModelSerializer):
     pending_price_proposal_uzs = serializers.SerializerMethodField()
     pending_master_offer_id = serializers.SerializerMethodField()
     pending_master_offer_expires_at = serializers.SerializerMethodField()
+    client_reviewed = serializers.SerializerMethodField()
     attachments = OrderAttachmentSerializer(many=True, read_only=True)
     description = serializers.CharField(min_length=10, allow_blank=False)
     scheduled_at = serializers.DateTimeField(required=False, allow_null=True)
@@ -88,6 +89,7 @@ class OrderSerializer(serializers.ModelSerializer):
             "pending_price_proposal_uzs",
             "pending_master_offer_id",
             "pending_master_offer_expires_at",
+            "client_reviewed",
             "final_price_uzs",
             "payment_method",
             "cancellation_reason",
@@ -108,6 +110,7 @@ class OrderSerializer(serializers.ModelSerializer):
             "pending_price_proposal_uzs",
             "pending_master_offer_id",
             "pending_master_offer_expires_at",
+            "client_reviewed",
             "final_price_uzs",
             "payment_method",
             "cancellation_reason",
@@ -116,6 +119,9 @@ class OrderSerializer(serializers.ModelSerializer):
             "updated_at",
             "completed_at",
         ]
+
+    def get_client_reviewed(self, order: Order) -> bool:
+        return order.reviews.filter(author=order.client_id).exists()
 
     def get_pending_price_proposal_uzs(self, order: Order):
         proposal = order.price_proposals.filter(status=PriceProposalStatus.PENDING).order_by("-created_at").first()
