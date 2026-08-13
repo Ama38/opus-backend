@@ -27,6 +27,7 @@ from apps.orders.services import (
     accept_price,
     bargain_price,
     create_order_notifications,
+    decline_master_offer,
     expire_master_offer,
     expire_stale_searching_orders,
     match_order_with_radius_expansion,
@@ -328,6 +329,40 @@ class OrderFlowTests(TestCase):
         self.assertEqual(result.attempted_radii_km, (1, 3, 6))
         self.order.refresh_from_db()
         self.assertEqual(self.order.status, OrderStatus.OFFERED_TO_MASTER)
+
+    def test_declined_master_is_recorded_and_never_reoffered_same_order(self):
+        top_up_wallet(self.wallet, 40_001)
+        first_result = match_order_with_radius_expansion(
+            self.order,
+            start_radius_km=1,
+        )
+
+        self.assertIsNotNone(first_result.offer)
+        self.assertEqual(first_result.offer.master, self.master)
+
+        decline_result = decline_master_offer(
+            first_result.offer,
+            actor=self.master_user,
+        )
+
+        first_result.offer.refresh_from_db()
+        self.order.refresh_from_db()
+        self.assertEqual(first_result.offer.status, MasterOfferStatus.DECLINED)
+        self.assertIsNotNone(first_result.offer.responded_at)
+        self.assertIsNone(decline_result.offer)
+        self.assertEqual(self.order.status, OrderStatus.SEARCHING)
+
+        for _ in range(3):
+            retry = match_order_with_radius_expansion(
+                self.order,
+                start_radius_km=1,
+            )
+            self.assertIsNone(retry.offer)
+
+        self.assertEqual(
+            self.order.master_offers.filter(master=self.master).count(),
+            1,
+        )
 
     def test_matching_skips_master_with_active_order(self):
         top_up_wallet(self.wallet, 40_001)
