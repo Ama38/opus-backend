@@ -2,10 +2,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 from decimal import Decimal
 from math import asin, cos, radians, sin, sqrt
-import threading
 
-from asgiref.sync import async_to_sync
-from channels.layers import get_channel_layer
 from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
@@ -14,6 +11,7 @@ from apps.billing.services import consume_order
 from apps.masters.models import MasterProfile
 from apps.masters.services import master_can_receive_orders, master_has_active_subscription
 from apps.notifications.models import NotificationEvent
+from apps.notifications.realtime import safe_group_send
 from apps.notifications.services import create_in_app_notification
 
 from .models import (
@@ -27,9 +25,14 @@ from .models import (
     PriceProposalStatus,
 )
 
-# Radius stages (km); 0 = whole city (no distance cap). Configurable via settings.
-MATCHING_RADII_KM = tuple(getattr(settings, "MASTERGO_MATCHING_RADII_KM", (3, 7, 0)))
+# Radius stages (km), configurable for deployments but aligned with the PRD by
+# default: nearby first, then a measured expansion without leaking city-wide
+# stale offers to distant masters.
+MATCHING_RADII_KM = tuple(getattr(settings, "MASTERGO_MATCHING_RADII_KM", (1, 3, 6)))
 MASTER_OFFER_TTL_SECONDS = int(getattr(settings, "MASTERGO_OFFER_TTL_SECONDS", 60))
+SEARCH_ORDER_TTL_MINUTES = int(
+    getattr(settings, "MASTERGO_SEARCH_ORDER_TTL_MINUTES", 30)
+)
 _DISTANCE_SCORE_CAP_KM = 10.0
 
 
@@ -99,6 +102,10 @@ def transition_order(order: Order, to_status: str, *, actor=None, reason: str = 
         },
         include_master_channel=to_status == OrderStatus.OFFERED_TO_MASTER,
     )
+    if to_status in {OrderStatus.COMPLETED, OrderStatus.CANCELLED, OrderStatus.EXPIRED}:
+        from apps.chat.services import close_order_room
+
+        close_order_room(order, reason=reason)
     create_order_notifications(order, from_status, to_status, reason)
     _broadcast_master_analytics_updated(order)
     return order
@@ -109,13 +116,12 @@ def _broadcast_order_event(order: Order, payload: dict, *, include_master_channe
 
     order_snapshot = Order.objects.select_related("client", "master__user", "category").get(id=order.id)
     payload = {**payload, "order": OrderSerializer(order_snapshot).data}
-    channel_layer = get_channel_layer()
-    async_to_sync(channel_layer.group_send)(
+    safe_group_send(
         f"order_{order.id}",
         {"type": "order.event", "payload": payload},
     )
     if include_master_channel and order_snapshot.master_id:
-        async_to_sync(channel_layer.group_send)(
+        safe_group_send(
             f"master_user_{order_snapshot.master.user_id}",
             {"type": "order.event", "payload": payload},
         )
@@ -147,8 +153,7 @@ def _master_offer_payload(offer: MasterOffer, event: str) -> dict:
 
 
 def _broadcast_master_offer_event(offer: MasterOffer, event: str) -> None:
-    channel_layer = get_channel_layer()
-    async_to_sync(channel_layer.group_send)(
+    safe_group_send(
         _master_group_name(offer.master),
         {"type": "order.event", "payload": _master_offer_payload(offer, event)},
     )
@@ -160,8 +165,7 @@ def _broadcast_master_analytics_updated(order: Order) -> None:
     order_snapshot = Order.objects.select_related("master__user").get(id=order.id)
     if not order_snapshot.master_id:
         return
-    channel_layer = get_channel_layer()
-    async_to_sync(channel_layer.group_send)(
+    safe_group_send(
         _master_group_name(order_snapshot.master),
         {
             "type": "order.event",
@@ -174,19 +178,6 @@ def _broadcast_master_analytics_updated(order: Order) -> None:
             },
         },
     )
-
-
-def _expire_offer_after_delay(offer_id: int, delay_seconds: float) -> None:
-    timer = threading.Timer(delay_seconds, expire_master_offer, args=(offer_id,))
-    timer.daemon = True
-    timer.start()
-
-
-def schedule_offer_expiration(offer: MasterOffer) -> None:
-    if not getattr(settings, "MASTERGO_OFFER_EXPIRATION_TIMER_ENABLED", True):
-        return
-    delay_seconds = max(0.0, (offer.expires_at - timezone.now()).total_seconds())
-    _expire_offer_after_delay(offer.id, delay_seconds)
 
 
 def create_order_notifications(order: Order, from_status: str, to_status: str, reason: str = "") -> None:
@@ -429,7 +420,7 @@ def _notify(user, event_type: str, title_ru: str, title_uz: str, body_ru: str, b
 def _push_incoming_offer(order: Order) -> None:
     """Send a high-priority FCM push so the master gets a ringing, full-screen
     incoming-order alert even when the app is backgrounded or the phone locked."""
-    from apps.notifications.push import send_push_to_user
+    from apps.notifications.push import enqueue_push_to_user
 
     master_user = order.master.user
     is_uzbek = getattr(master_user, "language", "ru") == "uz"
@@ -437,7 +428,7 @@ def _push_incoming_offer(order: Order) -> None:
     title = "Yangi buyurtma" if is_uzbek else "Новая заявка"
     body = f"{category} · {order.address_text}"
     try:
-        send_push_to_user(
+        enqueue_push_to_user(
             master_user,
             title=title,
             body=body,
@@ -472,12 +463,12 @@ def _push_client_update(
     the master's ringing incoming-order alert, this shows up in the tray via the
     notification block so the client is reliably pulled back into the flow even
     when the app is backgrounded or killed."""
-    from apps.notifications.push import send_push_to_user
+    from apps.notifications.push import enqueue_push_to_user
 
     client = order.client
     is_uzbek = getattr(client, "language", "ru") == "uz"
     try:
-        send_push_to_user(
+        enqueue_push_to_user(
             client,
             title=title_uz if is_uzbek else title_ru,
             body=body_uz if is_uzbek else body_ru,
@@ -630,20 +621,82 @@ def _pick_best_candidate(candidates: list[MasterScore]) -> MasterScore:
     return candidates[0]
 
 
-def expire_stale_master_offers(*, continue_matching: bool = False) -> int:
+def expire_stale_master_offers(
+    *,
+    continue_matching: bool = False,
+    master: MasterProfile | None = None,
+    order: Order | None = None,
+    limit: int = 100,
+) -> int:
+    queryset = MasterOffer.objects.filter(
+        status=MasterOfferStatus.PENDING,
+        expires_at__lte=timezone.now(),
+        order__status=OrderStatus.OFFERED_TO_MASTER,
+    )
+    if master is not None:
+        queryset = queryset.filter(master=master)
+    if order is not None:
+        queryset = queryset.filter(order=order)
     offer_ids = list(
-        MasterOffer.objects.filter(
-            status=MasterOfferStatus.PENDING,
-            expires_at__lte=timezone.now(),
-            order__status=OrderStatus.OFFERED_TO_MASTER,
-        )
-        .order_by("expires_at")
-        .values_list("id", flat=True)
+        queryset.order_by("expires_at").values_list("id", flat=True)[:limit]
     )
     expired_count = 0
     for offer_id in offer_ids:
         if expire_master_offer(offer_id, continue_matching=continue_matching):
             expired_count += 1
+    return expired_count
+
+
+def expire_stale_searching_orders(
+    *,
+    client=None,
+    order: Order | None = None,
+    limit: int = 100,
+) -> int:
+    """Expire urgent requests that were never accepted within the search TTL."""
+    cutoff = timezone.now() - timedelta(minutes=SEARCH_ORDER_TTL_MINUTES)
+    queryset = Order.objects.filter(
+        status__in=[OrderStatus.SEARCHING, OrderStatus.OFFERED_TO_MASTER],
+        created_at__lte=cutoff,
+    )
+    if client is not None:
+        queryset = queryset.filter(client=client)
+    if order is not None:
+        queryset = queryset.filter(id=order.id)
+    order_ids = list(
+        queryset.order_by("created_at").values_list("id", flat=True)[:limit]
+    )
+    expired_count = 0
+    for order_id in order_ids:
+        expired_offers: list[MasterOffer] = []
+        with transaction.atomic():
+            order = Order.objects.select_for_update().filter(id=order_id).first()
+            if order is None or order.status not in {
+                OrderStatus.SEARCHING,
+                OrderStatus.OFFERED_TO_MASTER,
+            }:
+                continue
+            expired_offers = list(
+                order.master_offers.select_related("master__user").filter(
+                    status=MasterOfferStatus.PENDING
+                )
+            )
+            now = timezone.now()
+            for offer in expired_offers:
+                offer.status = MasterOfferStatus.EXPIRED
+                offer.responded_at = now
+                offer.save(update_fields=["status", "responded_at"])
+            order.master = None
+            order.save(update_fields=["master", "updated_at"])
+            transition_order(
+                order,
+                OrderStatus.EXPIRED,
+                reason="search_timeout",
+                metadata={"ttl_minutes": SEARCH_ORDER_TTL_MINUTES},
+            )
+            expired_count += 1
+        for offer in expired_offers:
+            _broadcast_master_offer_event(offer, "offer_expired")
     return expired_count
 
 
@@ -835,7 +888,6 @@ def offer_order_to_best_master(order: Order, radius_km: int = MATCHING_RADII_KM[
         metadata={"radius_km": radius_km, "score": best.score, "distance_km": best.distance_km},
     )
     _broadcast_master_offer_event(offer, "offer")
-    schedule_offer_expiration(offer)
     return offer
 
 
@@ -871,14 +923,21 @@ def _offer_to_preferred_master(order: Order) -> MasterOffer | None:
         metadata={"preferred": True},
     )
     _broadcast_master_offer_event(offer, "offer")
-    schedule_offer_expiration(offer)
     return offer
 
 
 @transaction.atomic
 def match_order_with_radius_expansion(order: Order, start_radius_km: int = MATCHING_RADII_KM[0]) -> MatchAttemptResult:
-    expire_stale_master_offers()
+    expire_stale_searching_orders(order=order, limit=1)
+    expire_stale_master_offers(order=order, limit=1)
     order.refresh_from_db(fields=["status", "master", "updated_at"])
+    if order.status == OrderStatus.EXPIRED:
+        return MatchAttemptResult(
+            order=order,
+            offer=None,
+            attempted_radii_km=(),
+            exhausted=True,
+        )
     current_offer = order.master_offers.filter(
         status=MasterOfferStatus.PENDING,
         expires_at__gt=timezone.now(),
@@ -941,8 +1000,10 @@ def match_order_with_radius_expansion(order: Order, start_radius_km: int = MATCH
     )
 
 
-def match_open_orders(limit: int = 20) -> int:
-    expire_stale_master_offers()
+def match_open_orders(limit: int = 20, *, reconcile: bool = True) -> int:
+    if reconcile:
+        expire_stale_searching_orders()
+        expire_stale_master_offers()
     matched_count = 0
     orders = (
         Order.objects.filter(status=OrderStatus.SEARCHING, master__isnull=True)

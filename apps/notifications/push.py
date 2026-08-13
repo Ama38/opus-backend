@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import queue
 import threading
 
 logger = logging.getLogger(__name__)
@@ -24,6 +25,11 @@ logger = logging.getLogger(__name__)
 _init_lock = threading.Lock()
 _app = None
 _init_attempted = False
+_push_queue: queue.Queue[dict] = queue.Queue(
+    maxsize=int(os.getenv("MASTERGO_PUSH_QUEUE_SIZE", "100"))
+)
+_worker_lock = threading.Lock()
+_worker_started = False
 
 
 def _load_credentials():
@@ -72,6 +78,61 @@ def _get_app():
 
 def is_configured() -> bool:
     return _get_app() is not None
+
+
+def _credentials_configured() -> bool:
+    return bool(
+        os.getenv("FIREBASE_CREDENTIALS_JSON")
+        or os.getenv("FIREBASE_CREDENTIALS_FILE")
+        or os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+    )
+
+
+def _push_worker() -> None:
+    from django.db import close_old_connections
+
+    from apps.accounts.models import User
+
+    while True:
+        job = _push_queue.get()
+        try:
+            close_old_connections()
+            user = User.objects.filter(id=job.pop("user_id")).first()
+            if user is not None:
+                send_push_to_user(user, **job)
+        except Exception:
+            logger.exception("Background FCM delivery failed.")
+        finally:
+            close_old_connections()
+            _push_queue.task_done()
+
+
+def _start_push_worker() -> None:
+    global _worker_started
+    if _worker_started:
+        return
+    with _worker_lock:
+        if _worker_started:
+            return
+        threading.Thread(
+            target=_push_worker,
+            name="mastergo-fcm-worker",
+            daemon=True,
+        ).start()
+        _worker_started = True
+
+
+def enqueue_push_to_user(user, **kwargs) -> bool:
+    """Queue FCM without putting Google network latency on an API request."""
+    if not _credentials_configured():
+        return False
+    _start_push_worker()
+    try:
+        _push_queue.put_nowait({"user_id": user.id, **kwargs})
+        return True
+    except queue.Full:
+        logger.warning("FCM queue is full; dropping push for user %s", user.id)
+        return False
 
 
 def send_push_to_user(

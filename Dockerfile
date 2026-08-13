@@ -10,5 +10,7 @@ RUN pip install --no-cache-dir -r /app/requirements.txt
 
 COPY . /app
 
-# Shell form so $PORT (Railway/PaaS) is honoured; falls back to 8000 locally.
-CMD sh -c "uvicorn config.asgi:application --host 0.0.0.0 --port ${PORT:-8000}"
+# Keep boot deterministic on Railway: schema/static/category setup must finish
+# before traffic reaches ASGI. Connection/statement timeouts in Django settings
+# make a broken dependency fail fast so Railway can restart the container.
+CMD sh -c "python manage.py migrate --noinput && python manage.py collectstatic --noinput && python manage.py seed_categories && exec uvicorn config.asgi:application --host 0.0.0.0 --port ${PORT:-8000} --timeout-keep-alive 5 --ws-ping-interval 20 --ws-ping-timeout 20 --limit-concurrency ${UVICORN_LIMIT_CONCURRENCY:-200}"

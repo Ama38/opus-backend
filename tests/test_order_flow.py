@@ -14,12 +14,12 @@ from rest_framework.test import APIClient
 
 from apps.accounts.models import User
 from apps.billing.models import MasterWallet
-from apps.billing.services import top_up_wallet
+from apps.billing.services import activate_package, top_up_wallet
 from apps.masters.models import MasterCategoryPrice, MasterProfile, MasterStatus, ServiceCategory
 from apps.masters.services import master_can_receive_orders
 from apps.notifications.models import NotificationEvent
 from apps.orders.admin import OrderAdmin
-from apps.orders.models import MasterOfferStatus, Order, OrderCancelReason, OrderEvent, OrderStatus, PriceProposalStatus
+from apps.orders.models import MasterOffer, MasterOfferStatus, Order, OrderCancelReason, OrderEvent, OrderStatus, PriceProposalStatus
 from apps.orders.services import (
     MASTER_OFFER_TTL_SECONDS,
     OrderActionError,
@@ -28,6 +28,7 @@ from apps.orders.services import (
     bargain_price,
     create_order_notifications,
     expire_master_offer,
+    expire_stale_searching_orders,
     match_order_with_radius_expansion,
     offer_order_to_best_master,
     propose_price,
@@ -62,6 +63,11 @@ class OrderFlowTests(TestCase):
             max_price_uzs=250_000,
         )
         self.wallet = MasterWallet.objects.create(master=self.master)
+        self.subscription = activate_package(
+            self.master,
+            orders_count=100,
+            days=90,
+        )
         self.order = Order.objects.create(
             client=self.client,
             category=self.category,
@@ -71,13 +77,12 @@ class OrderFlowTests(TestCase):
             longitude=Decimal("69.241000"),
         )
 
-    def test_master_needs_balance_above_minimum_to_receive_orders(self):
+    def test_master_needs_active_package_to_receive_orders(self):
+        self.subscription.orders_remaining = 0
+        self.subscription.save(update_fields=["orders_remaining", "updated_at"])
         self.assertFalse(master_can_receive_orders(self.master))
 
-        top_up_wallet(self.wallet, 40_000)
-        self.assertFalse(master_can_receive_orders(self.master))
-
-        top_up_wallet(self.wallet, 1)
+        activate_package(self.master, orders_count=1, days=30)
         self.assertTrue(master_can_receive_orders(self.master))
 
     def test_master_with_active_order_cannot_receive_another_order(self):
@@ -186,7 +191,7 @@ class OrderFlowTests(TestCase):
         self.assertEqual(response.status_code, 404)
         self.assertEqual(response.json()["code"], "price_proposal_not_found")
 
-    @patch("apps.notifications.push.send_push_to_user")
+    @patch("apps.notifications.push.enqueue_push_to_user")
     def test_order_offer_push_uses_data_for_native_full_screen_alert(self, send_push):
         self.order.master = self.master
         self.order.status = OrderStatus.OFFERED_TO_MASTER
@@ -260,11 +265,11 @@ class OrderFlowTests(TestCase):
         self.assertEqual(order.master, self.master)
         self.assertTrue(order.master_offers.filter(status=MasterOfferStatus.PENDING).exists())
 
-    def test_master_cannot_accept_offer_after_balance_drops(self):
+    def test_master_cannot_accept_offer_after_package_is_frozen(self):
         top_up_wallet(self.wallet, 40_001)
         offer = offer_order_to_best_master(self.order, radius_km=1)
-        self.wallet.balance_uzs = 10_000
-        self.wallet.save(update_fields=["balance_uzs", "updated_at"])
+        self.subscription.is_frozen = True
+        self.subscription.save(update_fields=["is_frozen", "updated_at"])
 
         with self.assertRaises(OrderActionError) as context:
             accept_master_offer(offer)
@@ -312,6 +317,7 @@ class OrderFlowTests(TestCase):
         )
         far_wallet = MasterWallet.objects.create(master=far_master)
         top_up_wallet(far_wallet, 40_001)
+        activate_package(far_master, orders_count=10, days=30)
 
         result = match_order_with_radius_expansion(self.order, start_radius_km=1)
 
@@ -353,6 +359,7 @@ class OrderFlowTests(TestCase):
         )
         fallback_wallet = MasterWallet.objects.create(master=fallback_master)
         top_up_wallet(fallback_wallet, 40_001)
+        activate_package(fallback_master, orders_count=10, days=30)
 
         offer = offer_order_to_best_master(self.order, radius_km=1)
 
@@ -402,6 +409,70 @@ class OrderFlowTests(TestCase):
         self.assertEqual(self.order.status, OrderStatus.SEARCHING)
         self.assertIsNone(self.order.master)
 
+    def test_master_order_list_reconciles_offer_expired_during_restart(self):
+        self.order.master = self.master
+        self.order.status = OrderStatus.OFFERED_TO_MASTER
+        self.order.save(update_fields=["master", "status", "updated_at"])
+        offer = MasterOffer.objects.create(
+            order=self.order,
+            master=self.master,
+            expires_at=timezone.now() - timedelta(minutes=10),
+        )
+        api = APIClient()
+        api.force_authenticate(user=self.master_user)
+
+        response = api.get("/api/orders/")
+
+        self.assertEqual(response.status_code, 200)
+        offer.refresh_from_db()
+        self.order.refresh_from_db()
+        self.assertEqual(offer.status, MasterOfferStatus.EXPIRED)
+        self.assertEqual(self.order.status, OrderStatus.SEARCHING)
+        self.assertIsNone(self.order.master)
+        self.assertEqual(response.json(), [])
+
+    def test_old_searching_order_expires_instead_of_reaching_master(self):
+        top_up_wallet(self.wallet, 40_001)
+        Order.objects.filter(id=self.order.id).update(
+            status=OrderStatus.SEARCHING,
+            created_at=timezone.now() - timedelta(hours=2),
+        )
+
+        expired_count = expire_stale_searching_orders()
+
+        self.assertEqual(expired_count, 1)
+        self.order.refresh_from_db()
+        self.assertEqual(self.order.status, OrderStatus.EXPIRED)
+        self.assertIsNone(self.order.master)
+        self.assertFalse(self.order.master_offers.exists())
+
+    def test_scoped_expiration_does_not_touch_another_clients_order(self):
+        other_client = User.objects.create_user(
+            phone="+998907777777",
+            full_name="Other client",
+        )
+        other_order = Order.objects.create(
+            client=other_client,
+            category=self.category,
+            status=OrderStatus.SEARCHING,
+            description="Old but unrelated",
+            address_text="Tashkent",
+            latitude=Decimal("41.312000"),
+            longitude=Decimal("69.241000"),
+        )
+        Order.objects.filter(id__in=[self.order.id, other_order.id]).update(
+            status=OrderStatus.SEARCHING,
+            created_at=timezone.now() - timedelta(hours=2),
+        )
+
+        expired_count = expire_stale_searching_orders(client=self.client)
+
+        self.assertEqual(expired_count, 1)
+        self.order.refresh_from_db()
+        other_order.refresh_from_db()
+        self.assertEqual(self.order.status, OrderStatus.EXPIRED)
+        self.assertEqual(other_order.status, OrderStatus.SEARCHING)
+
     def test_matching_pushes_offer_payload_to_master_channel(self):
         top_up_wallet(self.wallet, 40_001)
         channel_layer = get_channel_layer()
@@ -442,6 +513,7 @@ class OrderFlowTests(TestCase):
         )
         fallback_wallet = MasterWallet.objects.create(master=fallback_master)
         top_up_wallet(fallback_wallet, 40_001)
+        activate_package(fallback_master, orders_count=10, days=30)
 
         offer = offer_order_to_best_master(self.order, radius_km=1)
         channel_layer = get_channel_layer()

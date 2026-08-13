@@ -66,3 +66,8 @@ class SupportChatTests(TestCase):
         )
         self.assertEqual(self.case.assigned_to, self.operator)
         self.assertEqual(self.case.status, SupportCaseStatus.IN_PROGRESS)
+
+        api = APIClient()
+        api.force_authenticate(self.user)
+        payload = api.get("/api/support/cases/").json()[0]
+        self.assertTrue(payload["messages"][0]["sender_is_operator"])

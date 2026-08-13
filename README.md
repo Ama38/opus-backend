@@ -42,7 +42,7 @@ python manage.py test tests   # run the suite
 ## Deploy on Railway
 
 1. New Project → Deploy from this GitHub repo. It builds from `Dockerfile` and
-   runs the `railway.json` start command (migrate → collectstatic →
+   runs its production command (migrate → collectstatic →
    seed_categories → uvicorn on `$PORT`). No demo/fake data is seeded.
 2. Add plugins **PostgreSQL** and **Redis** (they inject `DATABASE_URL` and
    `REDIS_URL`).
@@ -59,6 +59,9 @@ python manage.py test tests   # run the suite
 | `DJANGO_ALLOWED_HOSTS` | `localhost,127.0.0.1` | Railway domain auto-added |
 | `DATABASE_URL` | `${{Postgres.DATABASE_URL}}` | from plugin |
 | `REDIS_URL` | `${{Redis.REDIS_URL}}` | from plugin (Channels + OTP cache) |
+| `MASTERGO_ORDER_SWEEPER_ENABLED` | `1` | one bounded worker expires stale offers |
+| `MASTERGO_REALTIME_SEND_TIMEOUT_SECONDS` | `2` | Redis must not block API requests |
+| `DATABASE_STATEMENT_TIMEOUT_MS` | `20000` | bounds slow/locked SQL statements |
 | `MASTERGO_MOCK_OTP` | `1` first, `0` for real SMS | `1` = fixed code, no SMS |
 | `MASTERGO_MOCK_OTP_CODE` | `1111` | used only when mock is on |
 | `SMS_DRY_RUN` | `0` for real SMS | `1` = log code instead of sending |

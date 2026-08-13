@@ -10,7 +10,7 @@ from rest_framework.test import APIClient
 from apps.orders.models import Order, OrderStatus
 from apps.accounts.models import User
 from apps.billing.models import MasterWallet
-from apps.billing.services import top_up_wallet
+from apps.billing.services import activate_package, top_up_wallet
 from apps.geo.models import MasterLocationPing
 from apps.masters.models import MasterCategoryPrice, MasterProfile, MasterStatus, ServiceCategory
 
@@ -173,6 +173,7 @@ class APISmokeTests(TestCase):
         )
         wallet = MasterWallet.objects.create(master=master)
         top_up_wallet(wallet, 40_001)
+        activate_package(master, orders_count=10, days=30)
 
         self.api.force_authenticate(user=client)
         response = self.api.post(
@@ -292,6 +293,7 @@ class APISmokeTests(TestCase):
         )
         wallet = MasterWallet.objects.create(master=master)
         top_up_wallet(wallet, 40_001)
+        subscription = activate_package(master, orders_count=10, days=30)
 
         self.api.force_authenticate(user=client)
         response = self.api.post(
@@ -320,14 +322,14 @@ class APISmokeTests(TestCase):
         self.assertEqual(response.status_code, 403)
         self.assertEqual(response.json()["code"], "client_only_action")
 
-        wallet.balance_uzs = 10_000
-        wallet.save(update_fields=["balance_uzs", "updated_at"])
+        subscription.is_frozen = True
+        subscription.save(update_fields=["is_frozen", "updated_at"])
         response = self.api.post(f"/api/orders/{order_id}/master-accept/", {}, format="json")
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.json()["code"], "master_not_eligible")
 
-        wallet.balance_uzs = 40_001
-        wallet.save(update_fields=["balance_uzs", "updated_at"])
+        subscription.is_frozen = False
+        subscription.save(update_fields=["is_frozen", "updated_at"])
         response = self.api.post(f"/api/orders/{order_id}/master-accept/", {}, format="json")
         self.assertEqual(response.status_code, 200)
 

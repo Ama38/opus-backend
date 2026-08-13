@@ -4,10 +4,10 @@ from decimal import Decimal
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
-from asgiref.sync import async_to_sync
-from channels.layers import get_channel_layer
 from django.conf import settings
 from django.core.cache import cache
+
+from apps.notifications.realtime import safe_group_send
 
 from .models import MasterLocationPing
 
@@ -27,8 +27,7 @@ def broadcast_master_location_ping(ping: MasterLocationPing) -> None:
     if ping.order_id is None:
         return
 
-    channel_layer = get_channel_layer()
-    async_to_sync(channel_layer.group_send)(
+    safe_group_send(
         f"order_{ping.order_id}",
         {
             "type": "order.event",

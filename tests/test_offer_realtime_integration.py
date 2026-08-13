@@ -16,7 +16,7 @@ from rest_framework.test import APIClient
 
 from apps.accounts.models import User
 from apps.billing.models import MasterWallet
-from apps.billing.services import top_up_wallet
+from apps.billing.services import activate_package, top_up_wallet
 from apps.masters.models import MasterCategoryPrice, MasterProfile, MasterStatus, ServiceCategory
 from apps.orders.models import MasterOffer, MasterOfferStatus, Order, OrderStatus
 from apps.orders.services import MASTER_OFFER_TTL_SECONDS, expire_master_offer
@@ -208,6 +208,7 @@ class OfferRealtimeIntegrationTests(TransactionTestCase):
         )
         wallet = MasterWallet.objects.create(master=master)
         top_up_wallet(wallet, 40_001)
+        activate_package(master, orders_count=10, days=30)
         return master
 
     def _create_order_via_api(self):

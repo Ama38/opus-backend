@@ -5,11 +5,26 @@ from .models import SupportCase, SupportMessage
 
 class SupportMessageSerializer(serializers.ModelSerializer):
     sender_name = serializers.CharField(source="sender.full_name", read_only=True)
+    sender_is_operator = serializers.BooleanField(source="sender.is_staff", read_only=True)
 
     class Meta:
         model = SupportMessage
-        fields = ["id", "case", "sender", "sender_name", "text", "created_at"]
-        read_only_fields = ["id", "sender", "sender_name", "created_at"]
+        fields = [
+            "id",
+            "case",
+            "sender",
+            "sender_name",
+            "sender_is_operator",
+            "text",
+            "created_at",
+        ]
+        read_only_fields = [
+            "id",
+            "sender",
+            "sender_name",
+            "sender_is_operator",
+            "created_at",
+        ]
 
 
 class SupportCaseSerializer(serializers.ModelSerializer):

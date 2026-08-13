@@ -1,14 +1,13 @@
 import json
 from uuid import uuid4
 
-from asgiref.sync import async_to_sync
-from channels.layers import get_channel_layer
 from django.conf import settings
 from django.core.files.storage import default_storage
 from rest_framework import decorators, response, status, viewsets
 from rest_framework.renderers import JSONRenderer
 
-from apps.orders.models import Order
+from apps.orders.models import Order, OrderStatus
+from apps.notifications.realtime import safe_group_send
 
 from .models import ChatMessage, ChatRoom
 from .serializers import ChatMessageCreateSerializer, ChatMessageSerializer, ChatRoomSerializer
@@ -32,6 +31,14 @@ class ChatRoomViewSet(viewsets.ReadOnlyModelViewSet):
             return response.Response({"code": "order_not_found"}, status=status.HTTP_404_NOT_FOUND)
         if not request.user.is_staff and order.client_id != request.user.id and getattr(order.master, "user_id", None) != request.user.id:
             return response.Response({"code": "forbidden"}, status=status.HTTP_403_FORBIDDEN)
+        if order.master_id is None or order.status in {
+            OrderStatus.DRAFT,
+            OrderStatus.SEARCHING,
+            OrderStatus.OFFERED_TO_MASTER,
+        }:
+            return response.Response(
+                {"code": "chat_not_available"}, status=status.HTTP_409_CONFLICT
+            )
         room = get_or_create_order_room(order)
         return response.Response({"room": self.get_serializer(room).data})
 
@@ -52,6 +59,14 @@ class ChatMessageViewSet(viewsets.ReadOnlyModelViewSet):
             return response.Response({"code": "room_not_found"}, status=status.HTTP_404_NOT_FOUND)
         if not request.user.is_staff and room.order.client_id != request.user.id and getattr(room.order.master, "user_id", None) != request.user.id:
             return response.Response({"code": "forbidden"}, status=status.HTTP_403_FORBIDDEN)
+        if room.closed_at is not None or room.order.status in {
+            OrderStatus.COMPLETED,
+            OrderStatus.CANCELLED,
+            OrderStatus.EXPIRED,
+        }:
+            return response.Response(
+                {"code": "chat_closed"}, status=status.HTTP_409_CONFLICT
+            )
         serializer = ChatMessageCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         attachment_url = serializer.validated_data.get("attachment_url", "")
@@ -71,8 +86,7 @@ class ChatMessageViewSet(viewsets.ReadOnlyModelViewSet):
         client_message_id = serializer.validated_data.get("client_message_id", "")
         if client_message_id:
             payload["client_message_id"] = client_message_id
-        channel_layer = get_channel_layer()
-        async_to_sync(channel_layer.group_send)(
+        safe_group_send(
             f"chat_{room.id}",
             {"type": "chat.message", "payload": {"event": "message.created", "message": payload}},
         )

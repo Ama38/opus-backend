@@ -23,6 +23,8 @@ from .services import (
     client_reject_master,
     decline_master_offer,
     expire_master_offer,
+    expire_stale_searching_orders,
+    expire_stale_master_offers,
     match_open_orders,
     match_order_with_radius_expansion,
     propose_price,
@@ -60,12 +62,24 @@ class OrderViewSet(viewsets.ModelViewSet):
             return queryset
         return (queryset.filter(client=self.request.user) | queryset.filter(master__user=self.request.user)).distinct()
 
+    def list(self, request, *args, **kwargs):
+        # Reconcile only this user's state. A global sweep on every mobile poll
+        # created a thundering herd of DB locks and Redis events under load.
+        expire_stale_searching_orders(client=request.user, limit=10)
+        profile = self._get_master_profile(request)
+        if profile is not None:
+            expire_stale_master_offers(
+                master=profile,
+                continue_matching=True,
+                limit=10,
+            )
+        return super().list(request, *args, **kwargs)
+
     def perform_create(self, serializer):
         order = serializer.save(client=self.request.user)
         attachments = self.request.FILES.getlist("attachments[]") or self.request.FILES.getlist("attachments")
         for attachment in attachments:
             OrderAttachment.objects.create(order=order, file=attachment)
-        get_or_create_order_room(order)
         match_order_with_radius_expansion(order)
 
     @decorators.action(detail=True, methods=["post"])

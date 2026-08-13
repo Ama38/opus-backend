@@ -1,10 +1,12 @@
 from pathlib import Path
 from urllib.parse import urlparse, unquote
 import os
+import sys
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 ROOT_DIR = BASE_DIR.parent
+IS_TESTING = "test" in sys.argv
 
 
 def env_bool(name: str, default: bool = False) -> bool:
@@ -14,7 +16,19 @@ def env_bool(name: str, default: bool = False) -> bool:
     return value.lower() in {"1", "true", "yes", "on"}
 
 
-def database_from_url(database_url: str) -> dict[str, str | int]:
+DATABASE_CONNECT_TIMEOUT_SECONDS = int(
+    os.getenv("DATABASE_CONNECT_TIMEOUT_SECONDS", "5")
+)
+DATABASE_STATEMENT_TIMEOUT_MS = int(
+    os.getenv("DATABASE_STATEMENT_TIMEOUT_MS", "20000")
+)
+DATABASE_LOCK_TIMEOUT_MS = int(os.getenv("DATABASE_LOCK_TIMEOUT_MS", "5000"))
+REDIS_SOCKET_TIMEOUT_SECONDS = float(
+    os.getenv("REDIS_SOCKET_TIMEOUT_SECONDS", "2")
+)
+
+
+def database_from_url(database_url: str) -> dict:
     parsed = urlparse(database_url)
     if parsed.scheme not in {"postgres", "postgresql"}:
         raise ValueError("DATABASE_URL must use postgres:// or postgresql://")
@@ -26,6 +40,16 @@ def database_from_url(database_url: str) -> dict[str, str | int]:
         "PASSWORD": unquote(parsed.password or ""),
         "HOST": parsed.hostname or "",
         "PORT": parsed.port or 5432,
+        "CONN_MAX_AGE": 60,
+        "CONN_HEALTH_CHECKS": True,
+        "OPTIONS": {
+            "connect_timeout": DATABASE_CONNECT_TIMEOUT_SECONDS,
+            "options": (
+                f"-c statement_timeout={DATABASE_STATEMENT_TIMEOUT_MS} "
+                f"-c lock_timeout={DATABASE_LOCK_TIMEOUT_MS} "
+                "-c idle_in_transaction_session_timeout=20000"
+            ),
+        },
     }
 
 
@@ -64,6 +88,7 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    "config.middleware.RequestTimingMiddleware",
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
@@ -97,7 +122,14 @@ TEMPLATES = [
 
 database_url = os.getenv("DATABASE_URL")
 
-if database_url:
+if IS_TESTING and not env_bool("MASTERGO_TEST_USE_POSTGRES", False):
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.sqlite3",
+            "NAME": ":memory:",
+        }
+    }
+elif database_url:
     DATABASES = {"default": database_from_url(database_url)}
 elif env_bool("MASTERGO_USE_SQLITE", False):
     DATABASES = {
@@ -113,12 +145,22 @@ else:
             "NAME": os.getenv("POSTGRES_DB", "mastergo"),
             "USER": os.getenv("POSTGRES_USER", "mastergo"),
             "PASSWORD": os.getenv("POSTGRES_PASSWORD", "mastergo"),
-            "HOST": os.getenv("POSTGRES_HOST", "localhost"),
-            "PORT": os.getenv("POSTGRES_PORT", "5432"),
+        "HOST": os.getenv("POSTGRES_HOST", "localhost"),
+        "PORT": os.getenv("POSTGRES_PORT", "5432"),
+        "CONN_MAX_AGE": 60,
+        "CONN_HEALTH_CHECKS": True,
+        "OPTIONS": {
+            "connect_timeout": DATABASE_CONNECT_TIMEOUT_SECONDS,
+            "options": (
+                f"-c statement_timeout={DATABASE_STATEMENT_TIMEOUT_MS} "
+                f"-c lock_timeout={DATABASE_LOCK_TIMEOUT_MS} "
+                "-c idle_in_transaction_session_timeout=20000"
+            ),
+        },
         }
     }
 
-if env_bool("MASTERGO_USE_INMEMORY_CHANNELS", False):
+if IS_TESTING or env_bool("MASTERGO_USE_INMEMORY_CHANNELS", False):
     CHANNEL_LAYERS = {
         "default": {
             "BACKEND": "channels.layers.InMemoryChannelLayer",
@@ -129,7 +171,17 @@ else:
         "default": {
             "BACKEND": "channels_redis.core.RedisChannelLayer",
             "CONFIG": {
-                "hosts": [os.getenv("REDIS_URL", "redis://localhost:6379/0")],
+                "hosts": [
+                    {
+                        "address": os.getenv(
+                            "REDIS_URL", "redis://localhost:6379/0"
+                        ),
+                        "socket_connect_timeout": REDIS_SOCKET_TIMEOUT_SECONDS,
+                        "socket_timeout": REDIS_SOCKET_TIMEOUT_SECONDS,
+                        "health_check_interval": 30,
+                        "retry_on_timeout": False,
+                    }
+                ],
             },
         }
     }
@@ -138,11 +190,21 @@ else:
 # across worker processes in production. Use Redis when available; fall back
 # to per-process memory only for local single-process dev.
 _REDIS_URL = os.getenv("REDIS_URL")
-if _REDIS_URL and not env_bool("MASTERGO_USE_INMEMORY_CHANNELS", False):
+if (
+    _REDIS_URL
+    and not IS_TESTING
+    and not env_bool("MASTERGO_USE_INMEMORY_CHANNELS", False)
+):
     CACHES = {
         "default": {
             "BACKEND": "django.core.cache.backends.redis.RedisCache",
             "LOCATION": _REDIS_URL,
+            "OPTIONS": {
+                "socket_connect_timeout": REDIS_SOCKET_TIMEOUT_SECONDS,
+                "socket_timeout": REDIS_SOCKET_TIMEOUT_SECONDS,
+                "health_check_interval": 30,
+                "retry_on_timeout": False,
+            },
         }
     }
 else:
@@ -177,6 +239,10 @@ STORAGES = {
     "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
     "staticfiles": {"BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage"},
 }
+if IS_TESTING:
+    STORAGES["default"] = {
+        "BACKEND": "django.core.files.storage.InMemoryStorage"
+    }
 # Leading slash is required: without it FileField.url is a *relative* path and
 # request.build_absolute_uri() resolves it against the request path (e.g.
 # /api/media/... instead of /media/...), so avatars/attachments 404 in the apps.
@@ -229,7 +295,22 @@ MASTERGO_FREE_PACKAGES = env_bool("MASTERGO_FREE_PACKAGES", False)
 MASTERGO_AUTO_APPROVE_MASTERS = env_bool("MASTERGO_AUTO_APPROVE_MASTERS", False)
 
 # --- Matching (v3) ---
-MASTERGO_MATCHING_RADII_KM = (3, 7, 0)  # 0 = whole city (no distance cap)
+MASTERGO_MATCHING_RADII_KM = (1, 3, 6)
+MASTERGO_SEARCH_ORDER_TTL_MINUTES = int(
+    os.getenv("MASTERGO_SEARCH_ORDER_TTL_MINUTES", "30")
+)
+MASTERGO_REALTIME_SEND_TIMEOUT_SECONDS = float(
+    os.getenv("MASTERGO_REALTIME_SEND_TIMEOUT_SECONDS", "2")
+)
+MASTERGO_SLOW_REQUEST_SECONDS = float(
+    os.getenv("MASTERGO_SLOW_REQUEST_SECONDS", "1")
+)
+MASTERGO_ORDER_SWEEPER_ENABLED = env_bool(
+    "MASTERGO_ORDER_SWEEPER_ENABLED", not DEBUG
+)
+MASTERGO_ORDER_SWEEPER_INTERVAL_SECONDS = float(
+    os.getenv("MASTERGO_ORDER_SWEEPER_INTERVAL_SECONDS", "5")
+)
 MASTERGO_OFFER_TTL_SECONDS = int(os.getenv("MASTERGO_OFFER_TTL_SECONDS", "60"))
 MASTERGO_RADIUS_EXPAND_SECONDS = int(os.getenv("MASTERGO_RADIUS_EXPAND_SECONDS", "180"))
 MASTERGO_MATCH_WEIGHT_DISTANCE = 0.50
@@ -241,7 +322,6 @@ MASTERGO_NEWCOMER_ORDER_THRESHOLD = 10  # < this many completed = "newcomer"
 MASTERGO_NEWCOMER_PRIORITY_EVERY = 5    # every Nth order prioritises a newcomer
 MASTERGO_CLIENT_REFUSALS_TO_OPERATOR = 3
 
-MASTERGO_OFFER_EXPIRATION_TIMER_ENABLED = env_bool("MASTERGO_OFFER_EXPIRATION_TIMER_ENABLED", True)
 OSRM_ENABLED = env_bool("OSRM_ENABLED", False)
 OSRM_BASE_URL = os.getenv("OSRM_BASE_URL", "https://router.project-osrm.org")
 

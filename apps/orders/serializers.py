@@ -155,7 +155,7 @@ class PriceProposalSerializer(serializers.ModelSerializer):
 class MatchSerializer(serializers.Serializer):
     from django.conf import settings as _settings
 
-    _radii = list(getattr(_settings, "MASTERGO_MATCHING_RADII_KM", (3, 7, 0)))
+    _radii = list(getattr(_settings, "MASTERGO_MATCHING_RADII_KM", (1, 3, 6)))
     radius_km = serializers.ChoiceField(choices=_radii, default=_radii[0])
 
 

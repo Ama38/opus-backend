@@ -7,7 +7,13 @@ from apps.masters.models import MasterProfile
 
 from .models import MasterOffer, MasterOfferStatus
 from .serializers import MasterOfferSerializer, OrderSerializer
-from .services import OrderActionError, accept_master_offer, decline_master_offer, expire_master_offer
+from .services import (
+    OrderActionError,
+    accept_master_offer,
+    decline_master_offer,
+    expire_master_offer,
+    expire_stale_master_offers,
+)
 
 
 class OrderConsumer(AsyncJsonWebsocketConsumer):
@@ -34,6 +40,10 @@ class MasterOrdersConsumer(AsyncJsonWebsocketConsumer):
         self.group_name = f"master_user_{self.user.id}"
         await self.channel_layer.group_add(self.group_name, self.channel_name)
         await self.accept()
+        # Finish the handshake first, then reconcile only this master's offers.
+        # Global reconciliation here used to delay every reconnect and multiply
+        # matching work when several phones reconnected together.
+        await self._reconcile_stale_offers()
 
     async def disconnect(self, close_code):
         if hasattr(self, "group_name"):
@@ -64,6 +74,17 @@ class MasterOrdersConsumer(AsyncJsonWebsocketConsumer):
             return None
         auth_token = Token.objects.select_related("user").filter(key=token).first()
         return auth_token.user if auth_token else None
+
+    @database_sync_to_async
+    def _reconcile_stale_offers(self):
+        profile = MasterProfile.objects.filter(user=self.user).first()
+        if profile is None:
+            return 0
+        return expire_stale_master_offers(
+            master=profile,
+            continue_matching=True,
+            limit=10,
+        )
 
     @database_sync_to_async
     def _accept_offer(self, payload: dict) -> dict:
