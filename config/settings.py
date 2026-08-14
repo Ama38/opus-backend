@@ -325,9 +325,12 @@ MASTERGO_CLIENT_REFUSALS_TO_OPERATOR = 3
 OSRM_ENABLED = env_bool("OSRM_ENABLED", False)
 OSRM_BASE_URL = os.getenv("OSRM_BASE_URL", "https://router.project-osrm.org")
 
-# 2GIS API key (maps tiles + geocoder/suggest). Demo key for the prototype;
-# override via env in real deployments.
-MASTERGO_2GIS_KEY = os.getenv("MASTERGO_2GIS_KEY", "502c1521-9ee2-4de8-bec6-15b5f882c08e")
+# Public Mapbox token used by backend Geocoding v6 requests. Configure it in
+# Railway/environment settings and never commit the token into source control.
+MAPBOX_ACCESS_TOKEN = os.getenv(
+    "MAPBOX_ACCESS_TOKEN",
+    "pk.eyJ1IjoiYW1hM2FtYSIsImEiOiJjbXN0YWlieWgwY3piMnpxdTY0MDkwcmE4In0.N_DgO6uvJI7Zq-n7COh35A",
+)
 
 # --- SMS / OTP delivery ---------------------------------------------------
 # When MASTERGO_MOCK_OTP is on, the code is fixed and no SMS is sent.
