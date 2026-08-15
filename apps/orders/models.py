@@ -27,6 +27,7 @@ class OrderCancelReason(models.TextChoices):
     PRICE_REJECTED = "price_rejected", "Price rejected"
     MASTER_NO_RESPONSE = "master_no_response", "Master no response"
     NO_MASTER_FOUND = "no_master_found", "No master found"
+    REPLACED_BY_NEW_ORDER = "replaced_by_new_order", "Replaced by a newer order"
     SYSTEM = "system", "System"
 
 

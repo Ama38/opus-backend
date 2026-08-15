@@ -10,9 +10,27 @@ from .models import (
 
 
 class PackageSerializer(serializers.ModelSerializer):
+    # True during the free launch period: buying activates the package instantly
+    # at no cost. The app shows a "Бесплатно" badge and strikes the price.
+    is_free = serializers.SerializerMethodField()
+
     class Meta:
         model = Package
-        fields = ["id", "slug", "name_ru", "name_uz", "orders_count", "price_uzs", "sort_order"]
+        fields = [
+            "id",
+            "slug",
+            "name_ru",
+            "name_uz",
+            "orders_count",
+            "price_uzs",
+            "is_free",
+            "sort_order",
+        ]
+
+    def get_is_free(self, obj) -> bool:
+        from .services import free_packages_enabled
+
+        return free_packages_enabled()
 
 
 class PackagePurchaseSerializer(serializers.ModelSerializer):

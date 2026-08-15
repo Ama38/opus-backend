@@ -293,6 +293,14 @@ def create_order_notifications(order: Order, from_status: str, to_status: str, r
             "Buyurtmada taklifni tekshiring.",
             payload,
         )
+        _push_client_update(
+            order,
+            title_ru="Мастер предложил цену",
+            title_uz="Usta narx taklif qildi",
+            body_ru="Откройте заказ, чтобы принять или обсудить цену.",
+            body_uz="Narxni qabul qilish yoki muhokama qilish uchun buyurtmani oching.",
+            event="order.price_proposed",
+        )
         return
 
     if to_status == OrderStatus.PRICE_ACCEPTED and order.master_id:
@@ -412,6 +420,10 @@ def create_order_notifications(order: Order, from_status: str, to_status: str, r
         return
 
     if to_status == OrderStatus.CANCELLED:
+        # A search the client replaced by starting a new order: stay silent — the
+        # client did it themselves and must not get a "заказ отменён" popup.
+        if reason == OrderCancelReason.REPLACED_BY_NEW_ORDER:
+            return
         if order.master_id:
             _notify(
                 order.master.user,
@@ -458,6 +470,14 @@ def create_order_notifications(order: Order, from_status: str, to_status: str, r
             "Попробуйте изменить адрес или создать новую заявку.",
             "Manzilni o'zgartirib yoki yangi buyurtma yaratib ko'ring.",
             payload,
+        )
+        _push_client_update(
+            order,
+            title_ru="Мастер не найден",
+            title_uz="Usta topilmadi",
+            body_ru="Свободных мастеров рядом нет. Измените адрес или попробуйте позже.",
+            body_uz="Yaqin atrofda bo‘sh usta yo‘q. Manzilni o‘zgartiring yoki keyinroq urinib ko‘ring.",
+            event="order.no_master_found",
         )
         return
 
@@ -794,6 +814,54 @@ def expire_stale_searching_orders(
         for offer in expired_offers:
             _broadcast_master_offer_event(offer, "offer_expired")
     return expired_count
+
+
+def cancel_client_open_searches(client, *, exclude_order_id=None) -> int:
+    """Cancel the client's still-open searches so only one active search exists
+    at a time. Called when a client starts a new request: any older order that
+    has not been accepted yet (draft/searching/offered) is cancelled with the
+    ``replaced_by_new_order`` reason, and its pending offer is expired so the
+    master is not left hanging. The client is intentionally NOT notified for this
+    reason (see create_order_notifications) — they replaced it themselves."""
+    open_statuses = {
+        OrderStatus.DRAFT,
+        OrderStatus.SEARCHING,
+        OrderStatus.OFFERED_TO_MASTER,
+    }
+    queryset = Order.objects.filter(client=client, status__in=open_statuses)
+    if exclude_order_id is not None:
+        queryset = queryset.exclude(id=exclude_order_id)
+    order_ids = list(queryset.values_list("id", flat=True))
+    cancelled = 0
+    for order_id in order_ids:
+        expired_offers: list[MasterOffer] = []
+        with transaction.atomic():
+            order = Order.objects.select_for_update().filter(id=order_id).first()
+            if order is None or order.status not in open_statuses:
+                continue
+            expired_offers = list(
+                order.master_offers.select_related("master__user").filter(
+                    status=MasterOfferStatus.PENDING
+                )
+            )
+            now = timezone.now()
+            for offer in expired_offers:
+                offer.status = MasterOfferStatus.EXPIRED
+                offer.responded_at = now
+                offer.save(update_fields=["status", "responded_at"])
+            order.master = None
+            order.cancellation_reason = OrderCancelReason.REPLACED_BY_NEW_ORDER
+            order.save(update_fields=["master", "cancellation_reason", "updated_at"])
+            transition_order(
+                order,
+                OrderStatus.CANCELLED,
+                actor=client,
+                reason=OrderCancelReason.REPLACED_BY_NEW_ORDER,
+            )
+            cancelled += 1
+        for offer in expired_offers:
+            _broadcast_master_offer_event(offer, "offer_expired")
+    return cancelled
 
 
 def expire_master_offer(offer_id: int, *, continue_matching: bool = True) -> bool:

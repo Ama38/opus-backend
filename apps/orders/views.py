@@ -20,6 +20,7 @@ from .services import (
     accept_master_offer,
     accept_price,
     bargain_price,
+    cancel_client_open_searches,
     client_reject_master,
     decline_master_offer,
     expire_master_offer,
@@ -77,6 +78,10 @@ class OrderViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         order = serializer.save(client=self.request.user)
+        # One active search per client: starting a new request cancels any older
+        # open search so stale ones don't linger and later fire spurious
+        # "cancelled"/"expired" popups at the client.
+        cancel_client_open_searches(self.request.user, exclude_order_id=order.id)
         attachments = self.request.FILES.getlist("attachments[]") or self.request.FILES.getlist("attachments")
         for attachment in attachments:
             OrderAttachment.objects.create(order=order, file=attachment)

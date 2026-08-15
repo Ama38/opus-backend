@@ -1,3 +1,4 @@
+from django.conf import settings
 from rest_framework import serializers
 
 from apps.masters.models import MasterProfile, ServiceCategory
@@ -28,7 +29,15 @@ class OrderAttachmentSerializer(serializers.ModelSerializer):
             return ""
         request = self.context.get("request")
         url = attachment.file.url
-        return request.build_absolute_uri(url) if request else url
+        if request:
+            return request.build_absolute_uri(url)
+        # No request context (e.g. offer payload serialized in a service and sent
+        # over WebSocket): build an absolute URL from the configured base so the
+        # apps can actually load the photo.
+        base = getattr(settings, "PUBLIC_BASE_URL", "")
+        if base and url.startswith("/"):
+            return f"{base}{url}"
+        return url
 
 
 class OrderSerializer(serializers.ModelSerializer):

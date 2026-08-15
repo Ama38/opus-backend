@@ -63,6 +63,13 @@ ALLOWED_HOSTS = [
 if railway_public_domain := os.getenv("RAILWAY_PUBLIC_DOMAIN"):
     ALLOWED_HOSTS.append(railway_public_domain)
 
+# Absolute base used to build media URLs when there is no request context (e.g.
+# order/offer payloads serialized in services and pushed over WebSocket). Without
+# it those attachment URLs are relative and the apps can't load them.
+PUBLIC_BASE_URL = os.getenv("MASTERGO_PUBLIC_BASE_URL", "").rstrip("/")
+if not PUBLIC_BASE_URL and railway_public_domain:
+    PUBLIC_BASE_URL = f"https://{railway_public_domain}"
+
 INSTALLED_APPS = [
     "jazzmin",  # modern admin theme (must be before django.contrib.admin)
     "django.contrib.admin",

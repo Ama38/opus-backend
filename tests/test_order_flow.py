@@ -266,6 +266,61 @@ class OrderFlowTests(TestCase):
         self.assertEqual(order.master, self.master)
         self.assertTrue(order.master_offers.filter(status=MasterOfferStatus.PENDING).exists())
 
+    def test_new_order_cancels_previous_open_search_silently(self):
+        # One active search per client: creating a second request must cancel the
+        # first with the replaced reason and WITHOUT a "заказ отменён" popup.
+        self.order.delete()
+        api = APIClient()
+        api.force_authenticate(user=self.client)
+        body = {
+            "category_id": self.category.id,
+            "description": "First request for an electrician",
+            "address_text": "Tashkent",
+            "latitude": "41.312000",
+            "longitude": "69.241000",
+        }
+        first = api.post("/api/orders/", body, format="json")
+        self.assertEqual(first.status_code, 201, first.content)
+        first_id = first.json()["id"]
+
+        second = api.post(
+            "/api/orders/",
+            {**body, "description": "Second request for an electrician"},
+            format="json",
+        )
+        self.assertEqual(second.status_code, 201, second.content)
+        second_id = second.json()["id"]
+        self.assertNotEqual(first_id, second_id)
+
+        first_order = Order.objects.get(id=first_id)
+        self.assertEqual(first_order.status, OrderStatus.CANCELLED)
+        self.assertEqual(
+            first_order.cancellation_reason,
+            OrderCancelReason.REPLACED_BY_NEW_ORDER,
+        )
+        self.assertIsNone(first_order.master_id)
+        self.assertFalse(
+            first_order.master_offers.filter(
+                status=MasterOfferStatus.PENDING
+            ).exists()
+        )
+
+        from apps.notifications.models import NotificationEvent
+
+        # The client must not be notified about the search they replaced.
+        self.assertFalse(
+            NotificationEvent.objects.filter(
+                user=self.client, event_type="order.cancelled"
+            ).exists()
+        )
+
+        # The new order took over the search.
+        second_order = Order.objects.get(id=second_id)
+        self.assertIn(
+            second_order.status,
+            {OrderStatus.OFFERED_TO_MASTER, OrderStatus.SEARCHING},
+        )
+
     def test_master_cannot_accept_offer_after_package_is_frozen(self):
         top_up_wallet(self.wallet, 40_001)
         offer = offer_order_to_best_master(self.order, radius_km=1)

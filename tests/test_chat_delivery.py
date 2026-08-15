@@ -54,6 +54,50 @@ class ChatDeliveryTests(TestCase):
         self.assertEqual(response.json()["message"]["client_message_id"], "client-123")
         self.assertEqual(response.json()["message"]["text"], "Буду через 10 минут")
 
+    def test_send_notifies_the_other_participant(self):
+        client = User.objects.create_user(phone="+998901111112", full_name="Client")
+        master_user = User.objects.create_user(phone="+998902222223", full_name="Ustabek")
+        master = MasterProfile.objects.create(user=master_user, status=MasterStatus.APPROVED)
+        category = ServiceCategory.objects.create(
+            slug="electrician",
+            name_ru="Электрик",
+            name_uz="Elektrik",
+        )
+        order = Order.objects.create(
+            client=client,
+            master=master,
+            category=category,
+            status=OrderStatus.ACCEPTED_BY_MASTER,
+            description="Нет света",
+            address_text="Ташкент",
+            latitude=Decimal("41.312000"),
+            longitude=Decimal("69.241000"),
+        )
+        room = ChatRoom.objects.create(order=order)
+        api = APIClient()
+        api.force_authenticate(user=client)
+
+        response = api.post(
+            "/api/chat/messages/send/",
+            {"room_id": str(room.id), "kind": "text", "text": "Буду через 10 минут"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 201)
+        from apps.notifications.models import NotificationEvent
+
+        # The recipient is the master (not the sending client).
+        master_events = NotificationEvent.objects.filter(user=master_user, event_type="chat.message")
+        self.assertEqual(master_events.count(), 1)
+        event = master_events.first()
+        self.assertEqual(event.body, "Буду через 10 минут")
+        self.assertEqual(event.payload.get("order_id"), str(order.id))
+        self.assertEqual(event.payload.get("room_id"), str(room.id))
+        # The sender must not be notified about their own message.
+        self.assertFalse(
+            NotificationEvent.objects.filter(user=client, event_type="chat.message").exists()
+        )
+
     def test_cancelling_order_closes_room_and_rejects_new_messages(self):
         client = User.objects.create_user(phone="+998901111113", full_name="Client")
         master_user = User.objects.create_user(phone="+998902222224", full_name="Master")

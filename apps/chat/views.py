@@ -11,7 +11,7 @@ from apps.notifications.realtime import safe_group_send
 
 from .models import ChatMessage, ChatRoom
 from .serializers import ChatMessageCreateSerializer, ChatMessageSerializer, ChatRoomSerializer
-from .services import get_or_create_order_room
+from .services import get_or_create_order_room, notify_new_chat_message
 
 
 class ChatRoomViewSet(viewsets.ReadOnlyModelViewSet):
@@ -90,4 +90,7 @@ class ChatMessageViewSet(viewsets.ReadOnlyModelViewSet):
             f"chat_{room.id}",
             {"type": "chat.message", "payload": {"event": "message.created", "message": payload}},
         )
+        # Tray push + in-app record for the other participant so a new message is
+        # not missed while their app is backgrounded or on another screen.
+        notify_new_chat_message(room, message)
         return response.Response({"message": payload}, status=status.HTTP_201_CREATED)

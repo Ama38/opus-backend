@@ -6,6 +6,7 @@ from .models import (
     MasterWallet,
     Package,
     PackagePurchase,
+    PackagePurchaseStatus,
 )
 from .services import activate_purchase, freeze_subscription, top_up_wallet, unfreeze_subscription
 
@@ -53,6 +54,31 @@ class PackagePurchaseAdmin(admin.ModelAdmin):
             activate_purchase(purchase, activated_by=request.user)
             count += 1
         self.message_user(request, f"Activated {count} package(s).")
+
+    def save_model(self, request, obj, form, change):
+        # Operators commonly activate a package by flipping the status dropdown
+        # to "Activated" in the change form (or by creating an already-activated
+        # row) instead of using the bulk action. A bare save would only store
+        # the status and leave the master's subscription empty (orders_remaining
+        # 0, no expiry), so the purchase looks activated while the master still
+        # can't receive orders. Route every transition into "activated" through
+        # the real activation so the subscription allowance + expiry are applied.
+        was_activated = bool(
+            change
+            and obj.pk
+            and PackagePurchase.objects.filter(
+                pk=obj.pk, status=PackagePurchaseStatus.ACTIVATED
+            ).exists()
+        )
+        activating = obj.status == PackagePurchaseStatus.ACTIVATED and not was_activated
+        if activating:
+            # Persist the row with its pre-activation status first so
+            # activate_purchase's idempotency guard doesn't short-circuit before
+            # applying the order allowance.
+            obj.status = PackagePurchaseStatus.PENDING
+        super().save_model(request, obj, form, change)
+        if activating:
+            activate_purchase(obj, activated_by=request.user)
 
 
 class MasterLedgerEntryInline(admin.TabularInline):
