@@ -42,22 +42,24 @@ class SupportCaseAdmin(admin.ModelAdmin):
     list_display = ["subject", "user", "order", "status", "priority", "assigned_to", "created_at"]
     list_filter = ["status", "priority", "assigned_to", "created_at", "updated_at"]
     search_fields = ["subject", "body", "user__phone", "user__full_name", "order__id"]
-    readonly_fields = ["created_at", "updated_at"]
+    readonly_fields = [
+        "last_user_message_at", "last_operator_message_at", "closed_at",
+        "close_reason", "created_at", "updated_at",
+    ]
     inlines = [SupportMessageInline]
 
     def save_formset(self, request, form, formset, change):
         instances = formset.save(commit=False)
         for instance in instances:
-            if isinstance(instance, SupportMessage) and instance.sender_id is None:
-                # Operator reply: stamp the sending staff user.
-                instance.sender = request.user
-            instance.save()
+            if isinstance(instance, SupportMessage):
+                add_support_message(
+                    form.instance,
+                    sender=instance.sender if instance.sender_id else request.user,
+                    text=instance.text,
+                )
+            else:
+                instance.save()
         formset.save_m2m()
-        # A reply moves the case forward if it was still just "open".
-        case = form.instance
-        if instances and case.status == SupportCaseStatus.OPEN:
-            case.status = SupportCaseStatus.IN_PROGRESS
-            case.save(update_fields=["status", "updated_at"])
     actions = [
         "assign_to_me",
         "mark_open",

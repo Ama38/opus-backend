@@ -11,6 +11,11 @@ def expire_offer(offer_id: int) -> bool:
 
 
 def sweep_offer_expirations(limit: int = 20) -> dict[str, int]:
+    from apps.masters.services import expire_stale_online_sessions
+    from apps.support.services import close_inactive_support_cases
+
+    offline_count = expire_stale_online_sessions(limit=limit)
+    closed_support_count = close_inactive_support_cases(limit=limit)
     expired_orders_count = expire_stale_searching_orders()
     expired_count = expire_stale_master_offers(continue_matching=True)
     matched_count = match_open_orders(limit=limit, reconcile=False)
@@ -18,4 +23,6 @@ def sweep_offer_expirations(limit: int = 20) -> dict[str, int]:
         "expired_count": expired_count,
         "expired_orders_count": expired_orders_count,
         "matched_count": matched_count,
+        "offline_count": offline_count,
+        "closed_support_count": closed_support_count,
     }

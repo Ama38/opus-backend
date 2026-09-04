@@ -1,5 +1,6 @@
 from django.conf import settings
 from django.db import transaction
+from django.db.models import Count, Q
 from django.utils import timezone
 from rest_framework import decorators, permissions, response, status as http_status, viewsets
 
@@ -189,9 +190,14 @@ class MasterProfileViewSet(viewsets.ModelViewSet):
             return response.Response({"code": "master_not_approved"}, status=400)
         if not master_has_active_subscription(profile):
             return response.Response({"code": "no_active_package"}, status=400)
+        now = timezone.now()
+        if not profile.is_online or profile.online_since is None:
+            profile.online_since = now
         profile.is_online = True
-        profile.last_seen_at = timezone.now()
-        profile.save(update_fields=["is_online", "last_seen_at", "updated_at"])
+        profile.last_seen_at = now
+        profile.save(
+            update_fields=["is_online", "online_since", "last_seen_at", "updated_at"]
+        )
         match_open_orders()
         return response.Response({"profile": self.get_serializer(profile).data})
 
@@ -199,8 +205,11 @@ class MasterProfileViewSet(viewsets.ModelViewSet):
     def go_offline(self, request):
         profile = get_or_create_master_profile(request.user)
         profile.is_online = False
+        profile.online_since = None
         profile.last_seen_at = timezone.now()
-        profile.save(update_fields=["is_online", "last_seen_at", "updated_at"])
+        profile.save(
+            update_fields=["is_online", "online_since", "last_seen_at", "updated_at"]
+        )
         return response.Response({"profile": self.get_serializer(profile).data})
 
     @decorators.action(detail=False, methods=["post"], url_path="location")
@@ -220,6 +229,13 @@ class MasterProfileViewSet(viewsets.ModelViewSet):
         """Approved masters visible to clients, with their categories preloaded."""
         return (
             MasterProfile.objects.filter(status=MasterStatus.APPROVED)
+            .annotate(
+                public_review_count=Count(
+                    "user__reviews_received",
+                    filter=Q(user__reviews_received__is_public=True),
+                    distinct=True,
+                )
+            )
             .select_related("user")
             .prefetch_related(
                 "category_prices__category",

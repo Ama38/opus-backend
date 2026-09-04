@@ -60,6 +60,8 @@ python manage.py test tests   # run the suite
 | `DATABASE_URL` | `${{Postgres.DATABASE_URL}}` | from plugin |
 | `REDIS_URL` | `${{Redis.REDIS_URL}}` | from plugin (Channels + OTP cache) |
 | `MASTERGO_ORDER_SWEEPER_ENABLED` | `1` | one bounded worker expires stale offers |
+| `MASTERGO_MAX_ONLINE_HOURS` | `8` | automatically takes a master offline after one online session |
+| `MASTERGO_SUPPORT_INACTIVITY_HOURS` | `3` | closes a support chat when the operator is waiting for the user |
 | `MASTERGO_REALTIME_SEND_TIMEOUT_SECONDS` | `2` | Redis must not block API requests |
 | `DATABASE_STATEMENT_TIMEOUT_MS` | `20000` | bounds slow/locked SQL statements |
 | `MAPBOX_ACCESS_TOKEN` | restricted public token | forward/reverse Geocoding v6 |

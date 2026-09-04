@@ -1,10 +1,15 @@
 from django.contrib import admin
+from datetime import timedelta
+
 from django.test import RequestFactory, TestCase
+from django.utils import timezone
 from rest_framework.test import APIClient
 
 from apps.accounts.models import User
 from apps.support.admin import SupportCaseAdmin, SupportCaseAdminForm
+from apps.notifications.models import NotificationEvent
 from apps.support.models import SupportCase, SupportCaseStatus
+from apps.support.services import add_support_message, close_inactive_support_cases
 
 
 class SupportChatTests(TestCase):
@@ -21,7 +26,7 @@ class SupportChatTests(TestCase):
             body="Не могу связаться с мастером",
         )
 
-    def test_user_message_is_trimmed_and_reopens_resolved_case(self):
+    def test_user_cannot_reopen_resolved_case_with_a_message(self):
         self.case.status = SupportCaseStatus.RESOLVED
         self.case.save(update_fields=["status", "updated_at"])
         api = APIClient()
@@ -33,10 +38,71 @@ class SupportChatTests(TestCase):
             format="json",
         )
 
-        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.status_code, 409)
         self.case.refresh_from_db()
-        self.assertEqual(self.case.status, SupportCaseStatus.OPEN)
-        self.assertEqual(self.case.messages.get().text, "Проблема осталась")
+        self.assertEqual(self.case.status, SupportCaseStatus.RESOLVED)
+        self.assertFalse(self.case.messages.exists())
+        self.assertEqual(response.json()["code"], "support_case_closed")
+
+    def test_each_new_problem_creates_a_separate_chat_with_initial_message(self):
+        api = APIClient()
+        api.force_authenticate(self.user)
+
+        first = api.post(
+            "/api/support/cases/",
+            {"subject": "Заказ", "body": "Первый вопрос", "priority": "high"},
+            format="json",
+        )
+        second = api.post(
+            "/api/support/cases/",
+            {"subject": "Профиль", "body": "Второй вопрос"},
+            format="json",
+        )
+
+        self.assertEqual(first.status_code, 201)
+        self.assertEqual(second.status_code, 201)
+        self.assertNotEqual(first.json()["id"], second.json()["id"])
+        self.assertEqual(first.json()["messages"][0]["text"], "Первый вопрос")
+        self.assertEqual(second.json()["messages"][0]["text"], "Второй вопрос")
+
+    def test_user_can_close_case_and_cannot_send_more_messages(self):
+        api = APIClient()
+        api.force_authenticate(self.user)
+
+        closed = api.post(f"/api/support/cases/{self.case.id}/close/")
+        message = api.post(
+            f"/api/support/cases/{self.case.id}/message/",
+            {"text": "Новое сообщение"},
+            format="json",
+        )
+
+        self.assertEqual(closed.status_code, 200)
+        self.assertEqual(closed.json()["status"], SupportCaseStatus.CLOSED)
+        self.assertEqual(closed.json()["close_reason"], "resolved_by_user")
+        self.assertEqual(message.status_code, 409)
+
+    def test_case_closes_after_operator_waits_three_hours(self):
+        operator_message = add_support_message(
+            self.case,
+            sender=self.operator,
+            text="Уточните номер заказа",
+        )
+        stale_at = timezone.now() - timedelta(hours=3, minutes=1)
+        self.case.last_operator_message_at = stale_at
+        self.case.save(update_fields=["last_operator_message_at", "updated_at"])
+
+        closed_count = close_inactive_support_cases(now=timezone.now())
+
+        self.case.refresh_from_db()
+        self.assertIsNotNone(operator_message.id)
+        self.assertEqual(closed_count, 1)
+        self.assertEqual(self.case.status, SupportCaseStatus.CLOSED)
+        self.assertEqual(self.case.close_reason, "user_inactive")
+        self.assertTrue(
+            NotificationEvent.objects.filter(
+                user=self.user, event_type="support.case_closed"
+            ).exists()
+        )
 
     def test_operator_can_reply_from_case_admin(self):
         form = SupportCaseAdminForm(

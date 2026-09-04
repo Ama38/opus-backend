@@ -38,6 +38,7 @@ class MasterProfile(models.Model):
     completed_orders_count = models.PositiveIntegerField(default=0)
 
     is_online = models.BooleanField(default=False)
+    online_since = models.DateTimeField(null=True, blank=True)
     current_latitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
     current_longitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
     last_seen_at = models.DateTimeField(null=True, blank=True)

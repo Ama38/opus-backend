@@ -30,6 +30,10 @@ class SupportCase(models.Model):
         blank=True,
         related_name="assigned_support_cases",
     )
+    last_user_message_at = models.DateTimeField(null=True, blank=True)
+    last_operator_message_at = models.DateTimeField(null=True, blank=True)
+    closed_at = models.DateTimeField(null=True, blank=True)
+    close_reason = models.CharField(max_length=64, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

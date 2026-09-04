@@ -5,6 +5,7 @@ from unittest.mock import patch
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
 from django.test import TestCase, override_settings
+from django.utils import timezone
 from rest_framework.test import APIClient
 
 from apps.orders.models import Order, OrderStatus
@@ -160,6 +161,7 @@ class APISmokeTests(TestCase):
             user=master_user,
             status=MasterStatus.APPROVED,
             is_online=True,
+            online_since=timezone.now(),
             current_latitude=Decimal("41.311081"),
             current_longitude=Decimal("69.240562"),
             rating=Decimal("4.90"),

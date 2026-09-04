@@ -2,7 +2,7 @@ from rest_framework import decorators, response, status, viewsets
 
 from .models import SupportCase
 from .serializers import SupportCaseSerializer, SupportMessageCreateSerializer, SupportMessageSerializer
-from .services import add_support_message
+from .services import add_support_message, close_support_case
 
 
 class SupportCaseViewSet(viewsets.ModelViewSet):
@@ -15,17 +15,29 @@ class SupportCaseViewSet(viewsets.ModelViewSet):
         return queryset.filter(user=self.request.user)
 
     def perform_create(self, serializer):
-        serializer.save(user=self.request.user)
+        case = serializer.save(user=self.request.user)
+        if case.body.strip():
+            add_support_message(case, sender=self.request.user, text=case.body)
 
     @decorators.action(detail=True, methods=["post"])
     def message(self, request, pk=None):
         case = self.get_object()
         serializer = SupportMessageCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        message = add_support_message(
-            case,
-            sender=request.user,
-            text=serializer.validated_data["text"],
-        )
+        try:
+            message = add_support_message(
+                case,
+                sender=request.user,
+                text=serializer.validated_data["text"],
+            )
+        except ValueError as error:
+            return response.Response(
+                {"code": str(error)}, status=status.HTTP_409_CONFLICT
+            )
         return response.Response({"message": SupportMessageSerializer(message).data}, status=status.HTTP_201_CREATED)
+
+    @decorators.action(detail=True, methods=["post"])
+    def close(self, request, pk=None):
+        case = close_support_case(self.get_object(), reason="resolved_by_user")
+        return response.Response(self.get_serializer(case).data)
 

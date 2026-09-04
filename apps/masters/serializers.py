@@ -143,6 +143,7 @@ class MasterProfileSerializer(serializers.ModelSerializer):
             "rating",
             "completed_orders_count",
             "is_online",
+            "online_since",
             "current_latitude",
             "current_longitude",
             "last_seen_at",
@@ -157,6 +158,7 @@ class MasterProfileSerializer(serializers.ModelSerializer):
             "rating",
             "completed_orders_count",
             "is_online",
+            "online_since",
             "last_seen_at",
             "created_at",
             "updated_at",
@@ -216,6 +218,9 @@ class MasterPublicSerializer(serializers.ModelSerializer):
 
     full_name = serializers.CharField(source="user.full_name", read_only=True)
     effective_rating = serializers.SerializerMethodField()
+    review_count = serializers.IntegerField(
+        source="public_review_count", read_only=True, default=0
+    )
     categories = serializers.SerializerMethodField()
     portfolio = serializers.SerializerMethodField()
     portfolio_posts = MasterPortfolioPostSerializer(many=True, read_only=True)
@@ -233,6 +238,7 @@ class MasterPublicSerializer(serializers.ModelSerializer):
             "face_photo_url",
             "rating",
             "effective_rating",
+            "review_count",
             "completed_orders_count",
             "is_online",
             "categories",
@@ -274,14 +280,9 @@ class MasterPublicSerializer(serializers.ModelSerializer):
         return result
 
     def get_effective_rating(self, obj) -> float:
-        from django.conf import settings
-
-        threshold = int(getattr(settings, "MASTERGO_NEWCOMER_ORDER_THRESHOLD", 10))
-        starter = float(getattr(settings, "MASTERGO_STARTER_RATING", 4.5))
-        rating = float(obj.rating or 0)
-        if obj.completed_orders_count < threshold:
-            return round(max(rating, starter), 2)
-        return round(rating, 2)
+        # Kept for mobile API compatibility. The newcomer bonus belongs only
+        # to matching and must never be presented as a real customer rating.
+        return round(float(obj.rating or 0), 2)
 
     def get_categories(self, obj) -> list:
         prices = [

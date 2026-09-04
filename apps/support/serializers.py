@@ -41,11 +41,16 @@ class SupportCaseSerializer(serializers.ModelSerializer):
             "subject",
             "body",
             "assigned_to",
+            "closed_at",
+            "close_reason",
             "messages",
             "created_at",
             "updated_at",
         ]
-        read_only_fields = ["id", "user", "status", "assigned_to", "messages", "created_at", "updated_at"]
+        read_only_fields = [
+            "id", "user", "status", "assigned_to", "messages", "closed_at",
+            "close_reason", "created_at", "updated_at",
+        ]
 
 
 class SupportMessageCreateSerializer(serializers.Serializer):
