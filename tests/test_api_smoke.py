@@ -282,6 +282,7 @@ class APISmokeTests(TestCase):
             user=master_user,
             status=MasterStatus.APPROVED,
             is_online=True,
+            online_since=timezone.now(),
             current_latitude=Decimal("41.311081"),
             current_longitude=Decimal("69.240562"),
             rating=Decimal("4.90"),

@@ -18,6 +18,8 @@ def add_support_message(
     normalized = text.strip()
     if not normalized:
         raise ValueError("support_message_empty")
+    SupportCase.objects.select_for_update().get(pk=case.pk)
+    case.refresh_from_db()
     if case.status in {SupportCaseStatus.RESOLVED, SupportCaseStatus.CLOSED}:
         raise ValueError("support_case_closed")
 
@@ -46,6 +48,8 @@ def add_support_message(
 
 @transaction.atomic
 def close_support_case(case: SupportCase, *, reason: str) -> SupportCase:
+    SupportCase.objects.select_for_update().get(pk=case.pk)
+    case.refresh_from_db()
     if case.status in {SupportCaseStatus.RESOLVED, SupportCaseStatus.CLOSED}:
         return case
     now = timezone.now()
@@ -82,6 +86,10 @@ def close_inactive_support_cases(*, now=None, limit: int = 100) -> int:
         transitioned = SupportCase.objects.filter(
             id=case.id,
             status__in=[SupportCaseStatus.OPEN, SupportCaseStatus.IN_PROGRESS],
+            last_operator_message_at__lte=cutoff,
+        ).filter(
+            models.Q(last_user_message_at__isnull=True)
+            | models.Q(last_user_message_at__lte=models.F("last_operator_message_at"))
         ).update(
             status=SupportCaseStatus.CLOSED,
             closed_at=now,

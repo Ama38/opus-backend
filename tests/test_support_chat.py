@@ -1,5 +1,7 @@
 from django.contrib import admin
 from datetime import timedelta
+from unittest.mock import patch
+from django.db.models.query import QuerySet
 
 from django.test import RequestFactory, TestCase
 from django.utils import timezone
@@ -13,6 +15,51 @@ from apps.support.services import add_support_message, close_inactive_support_ca
 
 
 class SupportChatTests(TestCase):
+    def test_operator_final_reply_and_resolution_are_saved_together(self):
+        form = SupportCaseAdminForm(data={
+            "user": self.user.pk, "status": SupportCaseStatus.RESOLVED,
+            "priority": "normal", "subject": self.case.subject,
+            "body": self.case.body, "assigned_to": "",
+            "operator_reply": "Проблема решена",
+        }, instance=self.case)
+        self.assertTrue(form.is_valid(), form.errors)
+        obj = form.save(commit=False)
+        request = RequestFactory().post("/")
+        request.user = self.operator
+        handler = SupportCaseAdmin(SupportCase, admin.site)
+        handler.save_model(request, obj, form, True)
+        handler.save_related(request, form, [], True)
+        self.case.refresh_from_db()
+        self.assertEqual(self.case.status, SupportCaseStatus.RESOLVED)
+        self.assertIsNotNone(self.case.closed_at)
+        self.assertEqual(self.case.messages.get().text, "Проблема решена")
+
+    def test_reply_arriving_during_sweep_prevents_closure(self):
+        add_support_message(self.case, sender=self.operator, text="Уточните вопрос")
+        self.case.last_operator_message_at = timezone.now() - timedelta(hours=4)
+        self.case.save(update_fields=["last_operator_message_at"])
+        original_update = QuerySet.update
+        replied = False
+
+        def reply_before_update(queryset, **kwargs):
+            nonlocal replied
+            if queryset.model is SupportCase and kwargs.get("status") == SupportCaseStatus.CLOSED and not replied:
+                replied = True
+                add_support_message(self.case, sender=self.user, text="Мой ответ")
+            return original_update(queryset, **kwargs)
+
+        with patch.object(QuerySet, "update", new=reply_before_update):
+            self.assertEqual(close_inactive_support_cases(), 0)
+        self.assertTrue(replied)
+        self.case.refresh_from_db()
+        self.assertEqual(self.case.status, SupportCaseStatus.IN_PROGRESS)
+
+    def test_stale_case_cannot_receive_message_after_closure(self):
+        SupportCase.objects.filter(pk=self.case.pk).update(status=SupportCaseStatus.CLOSED)
+        with self.assertRaisesMessage(ValueError, "support_case_closed"):
+            add_support_message(self.case, sender=self.user, text="Поздний ответ")
+        self.assertFalse(self.case.messages.exists())
+
     def setUp(self):
         self.user = User.objects.create_user(
             phone="+998909002201", full_name="Client"
