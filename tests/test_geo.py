@@ -55,6 +55,7 @@ class ReverseGeocodeTests(TestCase):
                         "features": [
                             {
                                 "properties": {
+                                    "feature_type": "street",
                                     "full_address": "Chilonzor, Toshkent, Uzbekistan"
                                 }
                             }

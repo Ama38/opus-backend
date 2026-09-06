@@ -84,12 +84,19 @@ def _reverse_mapbox(latitude: Decimal, longitude: Decimal, key: str) -> str | No
             "longitude": f"{float(longitude):.6f}",
             "latitude": f"{float(latitude):.6f}",
             "language": "ru,uz,en",
+            "types": "address,street",
         }
     )
     payload = _fetch_json(f"{MAPBOX_REVERSE_GEOCODE_URL}?{params}")
     if not payload:
         return None
     for feature in payload.get("features") or []:
+        # A city/region is not a delivery address. Let the OSM fallback try
+        # whenever Mapbox lacks street-level coverage at this point.
+        if (feature.get("properties") or {}).get("feature_type") not in {
+            "address", "street"
+        }:
+            continue
         label = _mapbox_feature_label(feature)
         if label:
             return label
