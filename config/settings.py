@@ -403,6 +403,15 @@ JAZZMIN_SETTINGS = {
     "order_with_respect_to": ["orders", "masters", "billing", "chat", "reviews", "support", "accounts"],
     "changeform_format": "horizontal_tabs",
     "related_modal_active": True,
+    # Pure audit/technical logs: still viewable at their direct admin URL, just
+    # not cluttering the sidebar an operator scans to approve masters/orders.
+    "hide_models": [
+        "accounts.OTPChallenge",
+        "geo.MasterLocationPing",
+        "geo.GeoProviderEvent",
+        "orders.OrderEvent",
+        "notifications.DeviceToken",
+    ],
 }
 
 JAZZMIN_UI_TWEAKS = {

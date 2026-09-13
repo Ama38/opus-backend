@@ -3,7 +3,8 @@ from django.contrib.auth.admin import UserAdmin as DjangoUserAdmin
 from django.db import transaction
 from django.db.models import Q
 from django.shortcuts import redirect
-from django.urls import path
+from django.urls import path, reverse
+from django.utils.html import format_html
 
 from .models import OTPChallenge, User
 
@@ -18,16 +19,31 @@ class UserAdmin(DjangoUserAdmin):
     fieldsets = [
         (None, {"fields": ["phone", "password"]}),
         ("Profile", {"fields": ["full_name", "avatar_url", "language"]}),
+        ("Client access", {"fields": ["is_client_enabled"]}),
         (
-            "Roles",
-            {"fields": ["is_client_enabled", "is_master_enabled"]},
+            "Master access",
+            {
+                "fields": ["master_approval_link"],
+                "description": "Read-only here — approve, reject or block a master "
+                "from their Master profile page (single place, drives this flag automatically).",
+            },
         ),
         ("Permissions", {"fields": ["is_active", "is_staff", "is_superuser", "groups", "user_permissions"]}),
         ("Dates", {"fields": ["last_login", "date_joined", "updated_at"]}),
     ]
-    # is_master_enabled can also be flipped from the Master profile approve/reject
-    # actions, but operators may edit it directly here too.
-    readonly_fields = ["date_joined", "updated_at", "last_login"]
+    # is_master_enabled is derived from MasterProfile.status (see approve/reject/
+    # block on that model) — deliberately not editable here so there is exactly
+    # one place that decides whether a master is enabled.
+    readonly_fields = ["date_joined", "updated_at", "last_login", "master_approval_link"]
+
+    @admin.display(description="Master status")
+    def master_approval_link(self, obj):
+        profile = getattr(obj, "master_profile", None)
+        if profile is None:
+            return "— not a master —"
+        url = reverse("admin:masters_masterprofile_change", args=[profile.pk])
+        state = "✅ enabled" if obj.is_master_enabled else "🚫 disabled"
+        return format_html('<a href="{}">{} — {} (open profile to change)</a>', url, profile.get_status_display(), state)
     add_fieldsets = [
         (
             None,

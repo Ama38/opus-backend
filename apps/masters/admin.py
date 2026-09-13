@@ -58,8 +58,13 @@ class ServiceCategoryAdmin(admin.ModelAdmin):
 
 
 class MasterCategoryPriceInline(admin.TabularInline):
+    """Editable right on the master's page, so a service added *after*
+    approval (which comes back in as pending) is moderated here too — no
+    separate trip to the standalone MasterCategoryPrice list required."""
+
     model = MasterCategoryPrice
-    extra = 1
+    extra = 0
+    fields = ["category", "status", "is_active", "min_price_uzs", "max_price_uzs", "reject_reason"]
 
 
 @admin.register(MasterProfile)
@@ -67,6 +72,7 @@ class MasterProfileAdmin(admin.ModelAdmin):
     list_display = [
         "user",
         "status",
+        "pending_services",
         "is_online",
         "rating",
         "activity_points",
@@ -81,26 +87,31 @@ class MasterProfileAdmin(admin.ModelAdmin):
     inlines = [MasterCategoryPriceInline]
     actions = ["approve_masters", "reject_masters", "block_masters", "take_offline", "bring_online"]
 
-    @admin.action(description="Approve selected masters")
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related("user")
+
+    @admin.display(description="New services awaiting review")
+    def pending_services(self, obj):
+        count = obj.category_prices.filter(status=MasterServiceStatus.PENDING).count()
+        return f"⏳ {count}" if count else "—"
+
+    @admin.action(description="Approve selected masters (and their pending services)")
     def approve_masters(self, request, queryset):
         for master in queryset:
             master.approve()
+        self.message_user(request, f"Approved {queryset.count()} master(s).")
 
     @admin.action(description="Reject selected masters")
     def reject_masters(self, request, queryset):
-        updated = queryset.update(status=MasterStatus.REJECTED, is_online=False)
-        for master in queryset.select_related("user"):
-            master.user.is_master_enabled = False
-            master.user.save(update_fields=["is_master_enabled", "updated_at"])
-        self.message_user(request, f"Rejected {updated} master(s).")
+        for master in queryset:
+            master.reject()
+        self.message_user(request, f"Rejected {queryset.count()} master(s).")
 
     @admin.action(description="Block selected masters")
     def block_masters(self, request, queryset):
-        updated = queryset.update(status=MasterStatus.BLOCKED, is_online=False)
-        for master in queryset.select_related("user"):
-            master.user.is_master_enabled = False
-            master.user.save(update_fields=["is_master_enabled", "updated_at"])
-        self.message_user(request, f"Blocked {updated} master(s).")
+        for master in queryset:
+            master.block()
+        self.message_user(request, f"Blocked {queryset.count()} master(s).")
 
     @admin.action(description="Take selected masters offline")
     def take_offline(self, request, queryset):

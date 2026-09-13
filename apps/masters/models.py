@@ -79,6 +79,23 @@ class MasterProfile(models.Model):
             status=MasterServiceStatus.APPROVED, reject_reason=""
         )
 
+    def reject(self) -> None:
+        self.status = MasterStatus.REJECTED
+        self.is_online = False
+        self.user.is_master_enabled = False
+        self.user.save(update_fields=["is_master_enabled", "updated_at"])
+        self.save(update_fields=["status", "is_online", "updated_at"])
+
+    def block(self, reason: str = "") -> None:
+        self.status = MasterStatus.BLOCKED
+        self.is_online = False
+        self.blocked_at = timezone.now()
+        if reason:
+            self.block_reason = reason
+        self.user.is_master_enabled = False
+        self.user.save(update_fields=["is_master_enabled", "updated_at"])
+        self.save(update_fields=["status", "is_online", "blocked_at", "block_reason", "updated_at"])
+
 
 class MasterServiceStatus(models.TextChoices):
     PENDING = "pending", "Pending"
