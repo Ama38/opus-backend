@@ -24,8 +24,15 @@ class UserSerializer(serializers.ModelSerializer):
             "is_client_enabled",
             "is_master_enabled",
             "is_master_online",
+            "myid_verified_at",
         ]
-        read_only_fields = ["id", "is_client_enabled", "is_master_enabled", "is_master_online"]
+        read_only_fields = [
+            "id",
+            "is_client_enabled",
+            "is_master_enabled",
+            "is_master_online",
+            "myid_verified_at",
+        ]
 
     def get_is_master_online(self, obj) -> bool:
         profile = getattr(obj, "master_profile", None)
@@ -58,6 +65,10 @@ class MockOTPVerifySerializer(serializers.Serializer):
     code = serializers.CharField(min_length=4, max_length=4)
     full_name = serializers.CharField(max_length=160, required=False, allow_blank=True)
     language = serializers.ChoiceField(choices=User._meta.get_field("language").choices, required=False)
+
+
+class MyIdVerifySerializer(serializers.Serializer):
+    code = serializers.CharField(max_length=200)
 
 
 class PasswordLoginSerializer(serializers.Serializer):

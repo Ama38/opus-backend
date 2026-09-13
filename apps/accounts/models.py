@@ -40,6 +40,11 @@ class User(AbstractBaseUser, PermissionsMixin):
     avatar_url = models.URLField(blank=True)
     language = models.CharField(max_length=2, choices=Language.choices, default=Language.RU)
 
+    # Populated once from MyID.uz after a successful face-scan identification
+    # (see apps.accounts.myid). Not user-editable.
+    pinfl = models.CharField(max_length=14, blank=True)
+    myid_verified_at = models.DateTimeField(null=True, blank=True)
+
     is_client_enabled = models.BooleanField(default=True)
     is_master_enabled = models.BooleanField(default=False)
     is_active = models.BooleanField(default=True)

@@ -361,6 +361,18 @@ OTP_SMS_TEMPLATE = os.getenv(
 )
 
 
+# --- MyID.uz identity verification (master face-scan onboarding) ---------
+# Dev sandbox: https://api.devmyid.uz. Swap to the production host once the
+# MyID account is approved for real identifications.
+MYID_HOST = os.getenv("MYID_HOST", "https://api.devmyid.uz")
+MYID_CLIENT_ID = os.getenv("MYID_CLIENT_ID", "")
+MYID_CLIENT_SECRET = os.getenv("MYID_CLIENT_SECRET", "")
+# Static per-integration values (not secret) handed to the mobile SDK as-is.
+MYID_CLIENT_HASH = os.getenv("MYID_CLIENT_HASH", "")
+MYID_CLIENT_HASH_ID = os.getenv("MYID_CLIENT_HASH_ID", "")
+MYID_ENVIRONMENT = os.getenv("MYID_ENVIRONMENT", "DEBUG")
+
+
 # --- Admin theme (django-jazzmin) ---
 JAZZMIN_SETTINGS = {
     "site_title": "Opus Admin",

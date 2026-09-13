@@ -1,6 +1,14 @@
 from django.urls import path
 
-from .views import MeView, MockOTPStartView, MockOTPVerifyView, PasswordLoginView, LogoutView
+from .views import (
+    LogoutView,
+    MeView,
+    MockOTPStartView,
+    MockOTPVerifyView,
+    MyIdSessionView,
+    MyIdVerifyView,
+    PasswordLoginView,
+)
 
 
 urlpatterns = [
@@ -9,5 +17,7 @@ urlpatterns = [
     path("login/", PasswordLoginView.as_view(), name="password_login"),
     path("logout/", LogoutView.as_view(), name="logout"),
     path("me/", MeView.as_view(), name="me"),
+    path("myid/session/", MyIdSessionView.as_view(), name="myid_session"),
+    path("myid/verify/", MyIdVerifyView.as_view(), name="myid_verify"),
 ]
 

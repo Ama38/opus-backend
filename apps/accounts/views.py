@@ -1,10 +1,18 @@
+from django.conf import settings
 from django.contrib.auth import login, logout
 from django.utils import timezone
 from rest_framework import permissions, response, status, views
 from rest_framework.authtoken.models import Token
 
+from . import myid
 from .models import OTPPurpose
-from .serializers import MockOTPStartSerializer, MockOTPVerifySerializer, PasswordLoginSerializer, UserSerializer
+from .serializers import (
+    MockOTPStartSerializer,
+    MockOTPVerifySerializer,
+    MyIdVerifySerializer,
+    PasswordLoginSerializer,
+    UserSerializer,
+)
 from .services import OTPError, start_otp, verify_otp
 
 
@@ -84,6 +92,67 @@ class MeView(views.APIView):
         serializer.is_valid(raise_exception=True)
         serializer.save(updated_at=timezone.now())
         return response.Response({"user": serializer.data})
+
+
+class MyIdSessionView(views.APIView):
+    """Create a MyID identification session for the mobile SDK to launch."""
+
+    def post(self, request):
+        try:
+            session_id = myid.create_session(phone_number=request.user.phone)
+        except myid.MyIdError as error:
+            return response.Response({"code": str(error)}, status=status.HTTP_502_BAD_GATEWAY)
+
+        return response.Response(
+            {
+                "session_id": session_id,
+                "client_hash": settings.MYID_CLIENT_HASH,
+                "client_hash_id": settings.MYID_CLIENT_HASH_ID,
+                "environment": settings.MYID_ENVIRONMENT,
+            }
+        )
+
+
+class MyIdVerifyView(views.APIView):
+    """Exchange the SDK's one-time code for verified ФИО and save them."""
+
+    def post(self, request):
+        serializer = MyIdVerifySerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            data = myid.get_identification_data(serializer.validated_data["code"])
+        except myid.MyIdError as error:
+            return response.Response({"code": str(error)}, status=status.HTTP_502_BAD_GATEWAY)
+
+        common_data = ((data.get("data") or {}).get("profile") or {}).get("common_data") or {}
+        first_name = common_data.get("first_name", "")
+        last_name = common_data.get("last_name", "")
+        if not first_name or not last_name:
+            return response.Response({"code": "myid_profile_incomplete"}, status=status.HTTP_502_BAD_GATEWAY)
+
+        user = request.user
+        user.first_name = first_name
+        user.last_name = last_name
+        user.full_name = f"{first_name} {last_name}".strip()
+        birth_date = common_data.get("birth_date")
+        if birth_date:
+            user.birth_date = birth_date
+        pinfl = common_data.get("pinfl")
+        if pinfl:
+            user.pinfl = pinfl
+        user.myid_verified_at = timezone.now()
+        user.save(
+            update_fields=[
+                "first_name",
+                "last_name",
+                "full_name",
+                "birth_date",
+                "pinfl",
+                "myid_verified_at",
+                "updated_at",
+            ]
+        )
+        return response.Response({"user": UserSerializer(user, context={"request": request}).data})
 
 
 def _otp_error_response(error: OTPError):
