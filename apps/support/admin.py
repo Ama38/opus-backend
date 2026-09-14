@@ -119,31 +119,31 @@ class SupportCaseAdmin(admin.ModelAdmin):
             case.close_reason = "resolved_by_operator" if terminal else ""
             case.save(update_fields=["status", "closed_at", "close_reason", "updated_at"])
 
-    @admin.action(description="Assign selected cases to me")
+    @admin.action(description="Назначить выбранные обращения на себя")
     def assign_to_me(self, request, queryset):
         updated = queryset.update(assigned_to=request.user)
-        self.message_user(request, f"Assigned {updated} support case(s).")
+        self.message_user(request, f"Назначено обращений: {updated}.")
 
-    @admin.action(description="Mark selected cases as open")
+    @admin.action(description="Отметить как открытые")
     def mark_open(self, request, queryset):
         self._set_status(request, queryset, SupportCaseStatus.OPEN)
 
-    @admin.action(description="Mark selected cases in progress")
+    @admin.action(description="Отметить как в работе")
     def mark_in_progress(self, request, queryset):
         self._set_status(request, queryset, SupportCaseStatus.IN_PROGRESS)
 
-    @admin.action(description="Mark selected cases as resolved")
+    @admin.action(description="Отметить как решённые")
     def mark_resolved(self, request, queryset):
         self._set_status(request, queryset, SupportCaseStatus.RESOLVED)
 
-    @admin.action(description="Mark selected cases as closed")
+    @admin.action(description="Отметить как закрытые")
     def mark_closed(self, request, queryset):
         self._set_status(request, queryset, SupportCaseStatus.CLOSED)
 
     def _set_status(self, request, queryset, status: str):
         updated = queryset.count()
         self._transition_status(queryset, status)
-        self.message_user(request, f"Updated {updated} support case(s) to {status}.")
+        self.message_user(request, f"Обновлено обращений: {updated} → {status}.")
 
 
 @admin.register(SupportMessage)

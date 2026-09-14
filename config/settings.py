@@ -71,7 +71,6 @@ if not PUBLIC_BASE_URL and railway_public_domain:
     PUBLIC_BASE_URL = f"https://{railway_public_domain}"
 
 INSTALLED_APPS = [
-    "jazzmin",  # modern admin theme (must be before django.contrib.admin)
     "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",
@@ -371,61 +370,3 @@ MYID_CLIENT_SECRET = os.getenv("MYID_CLIENT_SECRET", "")
 MYID_CLIENT_HASH = os.getenv("MYID_CLIENT_HASH", "")
 MYID_CLIENT_HASH_ID = os.getenv("MYID_CLIENT_HASH_ID", "")
 MYID_ENVIRONMENT = os.getenv("MYID_ENVIRONMENT", "DEBUG")
-
-
-# --- Admin theme (django-jazzmin) ---
-JAZZMIN_SETTINGS = {
-    "site_title": "Opus Admin",
-    "site_header": "Opus",
-    "site_brand": "Opus",
-    "welcome_sign": "Opus — панель оператора",
-    "copyright": "Opus",
-    "search_model": ["accounts.User", "masters.MasterProfile", "orders.Order"],
-    "topmenu_links": [
-        {"name": "Заказы", "model": "orders.order"},
-        {"name": "Мастера", "model": "masters.masterprofile"},
-        {"name": "Заявки на пакеты", "model": "billing.packagepurchase"},
-    ],
-    "icons": {
-        "accounts.User": "fas fa-user",
-        "masters.MasterProfile": "fas fa-user-gear",
-        "masters.ServiceCategory": "fas fa-list",
-        "orders.Order": "fas fa-clipboard-list",
-        "billing.Package": "fas fa-box",
-        "billing.MasterSubscription": "fas fa-id-card",
-        "billing.PackagePurchase": "fas fa-receipt",
-        "chat.ChatRoom": "fas fa-comments",
-        "reviews.Review": "fas fa-star",
-        "support.SupportCase": "fas fa-headset",
-        "notifications.NotificationEvent": "fas fa-bell",
-        "notifications.DeviceToken": "fas fa-mobile-screen",
-    },
-    "order_with_respect_to": ["orders", "masters", "billing", "chat", "reviews", "support", "accounts"],
-    "changeform_format": "horizontal_tabs",
-    "related_modal_active": True,
-    # Pure audit/technical logs: still viewable at their direct admin URL, just
-    # not cluttering the sidebar an operator scans to approve masters/orders.
-    "hide_models": [
-        "accounts.OTPChallenge",
-        "geo.MasterLocationPing",
-        "geo.GeoProviderEvent",
-        "orders.OrderEvent",
-        "notifications.DeviceToken",
-    ],
-}
-
-JAZZMIN_UI_TWEAKS = {
-    "theme": "flatly",
-    "dark_mode_theme": "darkly",
-    "navbar": "navbar-dark",
-    "navbar_fixed": True,
-    "sidebar_fixed": True,
-    "sidebar": "sidebar-dark-primary",
-    "brand_colour": "navbar-primary",
-    "accent": "accent-primary",
-    "button_classes": {
-        "primary": "btn-primary",
-        "success": "btn-success",
-        "danger": "btn-danger",
-    },
-}

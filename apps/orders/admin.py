@@ -112,7 +112,7 @@ class OrderAdmin(admin.ModelAdmin):
                 launched += 1
         self.message_user(request, f"Запущен поиск для {launched} заказ(ов). Пропущено {skipped}.")
 
-    @admin.action(description="Mark selected orders as disputed")
+    @admin.action(description="Отметить выбранные заказы как спорные")
     def mark_disputed(self, request, queryset):
         updated = 0
         skipped = 0
@@ -126,7 +126,7 @@ class OrderAdmin(admin.ModelAdmin):
                 skipped += 1
             else:
                 updated += 1
-        self.message_user(request, f"Marked {updated} order(s) as disputed. Skipped {skipped}.")
+        self.message_user(request, f"Отмечено спорными: {updated}. Пропущено: {skipped}.")
 
 
 @admin.register(MasterOffer)

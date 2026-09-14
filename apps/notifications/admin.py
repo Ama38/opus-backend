@@ -20,22 +20,22 @@ class NotificationEventAdmin(admin.ModelAdmin):
     date_hierarchy = "created_at"
     actions = ["mark_pending", "mark_sent", "mark_failed", "mark_skipped"]
 
-    @admin.action(description="Mark selected notifications as pending")
+    @admin.action(description="Отметить как ожидающие")
     def mark_pending(self, request, queryset):
         self._set_status(request, queryset, NotificationStatus.PENDING)
 
-    @admin.action(description="Mark selected notifications as sent")
+    @admin.action(description="Отметить как отправленные")
     def mark_sent(self, request, queryset):
         self._set_status(request, queryset, NotificationStatus.SENT)
 
-    @admin.action(description="Mark selected notifications as failed")
+    @admin.action(description="Отметить как с ошибкой")
     def mark_failed(self, request, queryset):
         self._set_status(request, queryset, NotificationStatus.FAILED)
 
-    @admin.action(description="Mark selected notifications as skipped")
+    @admin.action(description="Отметить как пропущенные")
     def mark_skipped(self, request, queryset):
         self._set_status(request, queryset, NotificationStatus.SKIPPED)
 
     def _set_status(self, request, queryset, status: str):
         updated = queryset.update(status=status)
-        self.message_user(request, f"Updated {updated} notification(s) to {status}.")
+        self.message_user(request, f"Обновлено уведомлений: {updated} → {status}.")

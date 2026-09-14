@@ -18,32 +18,32 @@ class UserAdmin(DjangoUserAdmin):
     search_fields = ["phone", "full_name"]
     fieldsets = [
         (None, {"fields": ["phone", "password"]}),
-        ("Profile", {"fields": ["full_name", "avatar_url", "language"]}),
-        ("Client access", {"fields": ["is_client_enabled"]}),
+        ("Профиль", {"fields": ["full_name", "avatar_url", "language"]}),
+        ("Доступ клиента", {"fields": ["is_client_enabled"]}),
         (
-            "Master access",
+            "Доступ мастера",
             {
                 "fields": ["master_approval_link"],
-                "description": "Read-only here — approve, reject or block a master "
-                "from their Master profile page (single place, drives this flag automatically).",
+                "description": "Только для просмотра — подтвердить, отклонить или заблокировать "
+                "мастера можно на странице его профиля мастера (это меняет флаг автоматически).",
             },
         ),
-        ("Permissions", {"fields": ["is_active", "is_staff", "is_superuser", "groups", "user_permissions"]}),
-        ("Dates", {"fields": ["last_login", "date_joined", "updated_at"]}),
+        ("Права доступа", {"fields": ["is_active", "is_staff", "is_superuser", "groups", "user_permissions"]}),
+        ("Даты", {"fields": ["last_login", "date_joined", "updated_at"]}),
     ]
     # is_master_enabled is derived from MasterProfile.status (see approve/reject/
     # block on that model) — deliberately not editable here so there is exactly
     # one place that decides whether a master is enabled.
     readonly_fields = ["date_joined", "updated_at", "last_login", "master_approval_link"]
 
-    @admin.display(description="Master status")
+    @admin.display(description="Статус мастера")
     def master_approval_link(self, obj):
         profile = getattr(obj, "master_profile", None)
         if profile is None:
-            return "— not a master —"
+            return "— не мастер —"
         url = reverse("admin:masters_masterprofile_change", args=[profile.pk])
-        state = "✅ enabled" if obj.is_master_enabled else "🚫 disabled"
-        return format_html('<a href="{}">{} — {} (open profile to change)</a>', url, profile.get_status_display(), state)
+        state = "✅ включён" if obj.is_master_enabled else "🚫 отключён"
+        return format_html('<a href="{}">{} — {} (открыть профиль для изменения)</a>', url, profile.get_status_display(), state)
     add_fieldsets = [
         (
             None,

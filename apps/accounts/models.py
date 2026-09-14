@@ -31,27 +31,29 @@ class UserManager(BaseUserManager):
 
 
 class User(AbstractBaseUser, PermissionsMixin):
-    phone = models.CharField(max_length=32, unique=True)
-    full_name = models.CharField(max_length=160, blank=True)
-    first_name = models.CharField(max_length=80, blank=True)
-    last_name = models.CharField(max_length=80, blank=True)
-    birth_date = models.DateField(null=True, blank=True)
-    avatar = models.ImageField(upload_to="avatars/%Y/%m/", blank=True, null=True)
-    avatar_url = models.URLField(blank=True)
-    language = models.CharField(max_length=2, choices=Language.choices, default=Language.RU)
+    phone = models.CharField(max_length=32, unique=True, verbose_name="Телефон")
+    full_name = models.CharField(max_length=160, blank=True, verbose_name="Полное имя")
+    first_name = models.CharField(max_length=80, blank=True, verbose_name="Имя")
+    last_name = models.CharField(max_length=80, blank=True, verbose_name="Фамилия")
+    birth_date = models.DateField(null=True, blank=True, verbose_name="Дата рождения")
+    avatar = models.ImageField(upload_to="avatars/%Y/%m/", blank=True, null=True, verbose_name="Фото")
+    avatar_url = models.URLField(blank=True, verbose_name="Ссылка на фото")
+    language = models.CharField(
+        max_length=2, choices=Language.choices, default=Language.RU, verbose_name="Язык"
+    )
 
     # Populated once from MyID.uz after a successful face-scan identification
     # (see apps.accounts.myid). Not user-editable.
-    pinfl = models.CharField(max_length=14, blank=True)
-    myid_verified_at = models.DateTimeField(null=True, blank=True)
+    pinfl = models.CharField(max_length=14, blank=True, verbose_name="ПИНФЛ")
+    myid_verified_at = models.DateTimeField(null=True, blank=True, verbose_name="Верифицирован MyID")
 
-    is_client_enabled = models.BooleanField(default=True)
-    is_master_enabled = models.BooleanField(default=False)
-    is_active = models.BooleanField(default=True)
-    is_staff = models.BooleanField(default=False)
+    is_client_enabled = models.BooleanField(default=True, verbose_name="Доступ как клиент")
+    is_master_enabled = models.BooleanField(default=False, verbose_name="Доступ как мастер")
+    is_active = models.BooleanField(default=True, verbose_name="Активен")
+    is_staff = models.BooleanField(default=False, verbose_name="Сотрудник")
 
-    date_joined = models.DateTimeField(default=timezone.now)
-    updated_at = models.DateTimeField(auto_now=True)
+    date_joined = models.DateTimeField(default=timezone.now, verbose_name="Дата регистрации")
+    updated_at = models.DateTimeField(auto_now=True, verbose_name="Обновлён")
 
     objects = UserManager()
 
@@ -60,6 +62,8 @@ class User(AbstractBaseUser, PermissionsMixin):
 
     class Meta:
         ordering = ["-date_joined"]
+        verbose_name = "Пользователь"
+        verbose_name_plural = "Пользователи"
 
     def __str__(self) -> str:
         return self.full_name or self.phone

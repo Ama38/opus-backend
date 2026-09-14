@@ -4,59 +4,67 @@ from django.utils import timezone
 
 
 class MasterStatus(models.TextChoices):
-    PENDING = "pending", "Pending"
-    APPROVED = "approved", "Approved"
-    REJECTED = "rejected", "Rejected"
-    BLOCKED = "blocked", "Blocked"
+    PENDING = "pending", "На проверке"
+    APPROVED = "approved", "Подтверждён"
+    REJECTED = "rejected", "Отклонён"
+    BLOCKED = "blocked", "Заблокирован"
 
 
 class ServiceCategory(models.Model):
-    slug = models.SlugField(unique=True)
-    name_ru = models.CharField(max_length=120)
-    name_uz = models.CharField(max_length=120)
-    icon = models.CharField(max_length=16, blank=True)
-    color_hex = models.CharField(max_length=16, blank=True)
-    is_active = models.BooleanField(default=True)
-    sort_order = models.PositiveSmallIntegerField(default=100)
+    slug = models.SlugField(unique=True, verbose_name="Slug")
+    name_ru = models.CharField(max_length=120, verbose_name="Название (рус)")
+    name_uz = models.CharField(max_length=120, verbose_name="Название (узб)")
+    icon = models.CharField(max_length=16, blank=True, verbose_name="Иконка")
+    color_hex = models.CharField(max_length=16, blank=True, verbose_name="Цвет")
+    is_active = models.BooleanField(default=True, verbose_name="Активна")
+    sort_order = models.PositiveSmallIntegerField(default=100, verbose_name="Порядок")
 
     class Meta:
         ordering = ["sort_order", "name_ru"]
-        verbose_name_plural = "service categories"
+        verbose_name = "Категория услуг"
+        verbose_name_plural = "Категории услуг"
 
     def __str__(self) -> str:
         return self.name_ru
 
 
 class MasterProfile(models.Model):
-    user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="master_profile")
-    status = models.CharField(max_length=32, choices=MasterStatus.choices, default=MasterStatus.PENDING)
-    bio = models.TextField(blank=True)
-    face_photo_url = models.URLField(blank=True)
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="master_profile",
+        verbose_name="Пользователь",
+    )
+    status = models.CharField(
+        max_length=32, choices=MasterStatus.choices, default=MasterStatus.PENDING, verbose_name="Статус"
+    )
+    bio = models.TextField(blank=True, verbose_name="О себе")
+    face_photo_url = models.URLField(blank=True, verbose_name="Фото лица")
 
-    activity_points = models.IntegerField(default=400)
-    rating = models.DecimalField(max_digits=3, decimal_places=2, default=0)
-    completed_orders_count = models.PositiveIntegerField(default=0)
+    activity_points = models.IntegerField(default=400, verbose_name="Баллы активности")
+    rating = models.DecimalField(max_digits=3, decimal_places=2, default=0, verbose_name="Рейтинг")
+    completed_orders_count = models.PositiveIntegerField(default=0, verbose_name="Выполнено заказов")
 
-    is_online = models.BooleanField(default=False)
-    online_since = models.DateTimeField(null=True, blank=True)
-    current_latitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
-    current_longitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
-    last_seen_at = models.DateTimeField(null=True, blank=True)
+    is_online = models.BooleanField(default=False, verbose_name="На линии")
+    online_since = models.DateTimeField(null=True, blank=True, verbose_name="На линии с")
+    current_latitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True, verbose_name="Широта")
+    current_longitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True, verbose_name="Долгота")
+    last_seen_at = models.DateTimeField(null=True, blank=True, verbose_name="Последняя активность")
 
     # Weekly leaderboard snapshot (TZ §7.2): rank recomputed by a periodic job;
     # the previous value lets the UI show the ↑/↓ position change.
-    leaderboard_rank = models.PositiveIntegerField(null=True, blank=True)
-    leaderboard_rank_prev = models.PositiveIntegerField(null=True, blank=True)
+    leaderboard_rank = models.PositiveIntegerField(null=True, blank=True, verbose_name="Место в рейтинге")
+    leaderboard_rank_prev = models.PositiveIntegerField(null=True, blank=True, verbose_name="Прошлое место")
 
-    approved_at = models.DateTimeField(null=True, blank=True)
-    blocked_at = models.DateTimeField(null=True, blank=True)
-    block_reason = models.TextField(blank=True)
+    approved_at = models.DateTimeField(null=True, blank=True, verbose_name="Подтверждён")
+    blocked_at = models.DateTimeField(null=True, blank=True, verbose_name="Заблокирован")
+    block_reason = models.TextField(blank=True, verbose_name="Причина блокировки")
 
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name="Создан")
+    updated_at = models.DateTimeField(auto_now=True, verbose_name="Обновлён")
 
     class Meta:
         ordering = ["-created_at"]
+        verbose_name = "Мастер"
+        verbose_name_plural = "Мастера"
 
     def __str__(self) -> str:
         return str(self.user)
@@ -98,30 +106,39 @@ class MasterProfile(models.Model):
 
 
 class MasterServiceStatus(models.TextChoices):
-    PENDING = "pending", "Pending"
-    APPROVED = "approved", "Approved"
-    REJECTED = "rejected", "Rejected"
+    PENDING = "pending", "На проверке"
+    APPROVED = "approved", "Подтверждена"
+    REJECTED = "rejected", "Отклонена"
 
 
 class MasterCategoryPrice(models.Model):
     """A direction (service) the master offers. Up to 3 per master, each
     moderated (status) and independently toggleable (is_active)."""
 
-    master = models.ForeignKey(MasterProfile, on_delete=models.CASCADE, related_name="category_prices")
-    category = models.ForeignKey(ServiceCategory, on_delete=models.PROTECT, related_name="master_prices")
-    min_price_uzs = models.PositiveIntegerField()
-    max_price_uzs = models.PositiveIntegerField()
-    is_active = models.BooleanField(default=True)
-    status = models.CharField(
-        max_length=16, choices=MasterServiceStatus.choices, default=MasterServiceStatus.APPROVED
+    master = models.ForeignKey(
+        MasterProfile, on_delete=models.CASCADE, related_name="category_prices", verbose_name="Мастер"
     )
-    reject_reason = models.TextField(blank=True)
-    experience_years = models.CharField(max_length=16, blank=True)
-    created_at = models.DateTimeField(auto_now_add=True, null=True, blank=True)
+    category = models.ForeignKey(
+        ServiceCategory, on_delete=models.PROTECT, related_name="master_prices", verbose_name="Категория"
+    )
+    min_price_uzs = models.PositiveIntegerField(verbose_name="Цена от")
+    max_price_uzs = models.PositiveIntegerField(verbose_name="Цена до")
+    is_active = models.BooleanField(default=True, verbose_name="Активна")
+    status = models.CharField(
+        max_length=16,
+        choices=MasterServiceStatus.choices,
+        default=MasterServiceStatus.APPROVED,
+        verbose_name="Статус",
+    )
+    reject_reason = models.TextField(blank=True, verbose_name="Причина отказа")
+    experience_years = models.CharField(max_length=16, blank=True, verbose_name="Опыт (лет)")
+    created_at = models.DateTimeField(auto_now_add=True, null=True, blank=True, verbose_name="Создана")
 
     class Meta:
         unique_together = ["master", "category"]
         ordering = ["category__sort_order"]
+        verbose_name = "Услуга мастера"
+        verbose_name_plural = "Услуги мастеров"
 
     @property
     def is_available(self) -> bool:

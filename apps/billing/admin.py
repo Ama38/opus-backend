@@ -26,17 +26,17 @@ class MasterSubscriptionAdmin(admin.ModelAdmin):
     readonly_fields = ["created_at", "updated_at", "is_active", "is_expired", "days_left"]
     actions = ["freeze", "unfreeze"]
 
-    @admin.action(description="Freeze subscription (pause days)")
+    @admin.action(description="Заморозить подписку (приостановить дни)")
     def freeze(self, request, queryset):
         for sub in queryset.select_related("master"):
             freeze_subscription(sub.master)
-        self.message_user(request, f"Frozen {queryset.count()} subscription(s).")
+        self.message_user(request, f"Заморожено подписок: {queryset.count()}.")
 
-    @admin.action(description="Unfreeze subscription (resume days)")
+    @admin.action(description="Разморозить подписку (возобновить дни)")
     def unfreeze(self, request, queryset):
         for sub in queryset.select_related("master"):
             unfreeze_subscription(sub.master)
-        self.message_user(request, f"Unfrozen {queryset.count()} subscription(s).")
+        self.message_user(request, f"Разморожено подписок: {queryset.count()}.")
 
 
 @admin.register(PackagePurchase)
@@ -47,13 +47,13 @@ class PackagePurchaseAdmin(admin.ModelAdmin):
     readonly_fields = ["created_at", "activated_at", "activated_by"]
     actions = ["activate_selected"]
 
-    @admin.action(description="Payment received — activate package")
+    @admin.action(description="Оплата получена — активировать пакет")
     def activate_selected(self, request, queryset):
         count = 0
         for purchase in queryset.select_related("master"):
             activate_purchase(purchase, activated_by=request.user)
             count += 1
-        self.message_user(request, f"Activated {count} package(s).")
+        self.message_user(request, f"Активировано пакетов: {count}.")
 
     def save_model(self, request, obj, form, change):
         # Operators commonly activate a package by flipping the status dropdown
@@ -105,24 +105,24 @@ class MasterWalletAdmin(admin.ModelAdmin):
                 note=f"Admin manual top-up {amount_uzs} UZS",
                 created_by=request.user,
             )
-        self.message_user(request, f"Topped up {queryset.count()} wallet(s) by {amount_uzs} UZS.")
+        self.message_user(request, f"Пополнено кошельков: {queryset.count()} на {amount_uzs} UZS.")
 
-    @admin.action(description="Top up selected wallets by 40,000 UZS")
+    @admin.action(description="Пополнить выбранные кошельки на 40 000 UZS")
     def top_up_40000(self, request, queryset):
         self._top_up_selected(request, queryset, 40_000)
 
-    @admin.action(description="Top up selected wallets by 50,000 UZS")
+    @admin.action(description="Пополнить выбранные кошельки на 50 000 UZS")
     def top_up_50000(self, request, queryset):
         self._top_up_selected(request, queryset, 50_000)
 
-    @admin.action(description="Top up selected wallets by 100,000 UZS")
+    @admin.action(description="Пополнить выбранные кошельки на 100 000 UZS")
     def top_up_100000(self, request, queryset):
         self._top_up_selected(request, queryset, 100_000)
 
-    @admin.action(description="Reset selected wallets to 10 free orders")
+    @admin.action(description="Сбросить выбранные кошельки на 10 бесплатных заказов")
     def reset_free_orders(self, request, queryset):
         updated = queryset.update(free_orders_remaining=10)
-        self.message_user(request, f"Reset free orders for {updated} wallet(s).")
+        self.message_user(request, f"Сброшено кошельков: {updated}.")
 
 
 @admin.register(MasterLedgerEntry)
