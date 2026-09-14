@@ -131,6 +131,28 @@ class MasterProfileAdmin(admin.ModelAdmin):
         ),
     ]
 
+    def save_model(self, request, obj, form, change):
+        # `status` is a plain editable field on this form (so an operator can
+        # change it without hunting for the bulk action), but MasterProfile's
+        # own approve()/reject()/block() do more than set the status string --
+        # they flip user.is_master_enabled and (for approve) cascade-approve
+        # the master's pending services. A bare save would leave the status
+        # looking "Подтверждён" while the mobile app stays locked out, because
+        # it gates access on is_master_enabled, not on this field directly.
+        previous_status = None
+        if change and obj.pk:
+            previous_status = (
+                MasterProfile.objects.filter(pk=obj.pk).values_list("status", flat=True).first()
+            )
+        super().save_model(request, obj, form, change)
+        if previous_status is not None and previous_status != obj.status:
+            if obj.status == MasterStatus.APPROVED:
+                obj.approve()
+            elif obj.status == MasterStatus.REJECTED:
+                obj.reject()
+            elif obj.status == MasterStatus.BLOCKED:
+                obj.block()
+
     def get_queryset(self, request):
         # Masters waiting for approval float to the top -- that's the queue
         # an operator actually works from, not alphabetical/id order.
