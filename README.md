@@ -59,6 +59,8 @@ python manage.py test tests   # run the suite
 | `DJANGO_ALLOWED_HOSTS` | `localhost,127.0.0.1` | Railway domain auto-added |
 | `DATABASE_URL` | `${{Postgres.DATABASE_URL}}` | from plugin |
 | `REDIS_URL` | `${{Redis.REDIS_URL}}` | from plugin (Channels + OTP cache) |
+| `REDIS_SOCKET_TIMEOUT_SECONDS` | `2` | Redis connection and cache read timeout |
+| `CHANNELS_REDIS_SOCKET_TIMEOUT_SECONDS` | `10` | Channels read timeout; must exceed its 5-second blocking receive |
 | `MASTERGO_ORDER_SWEEPER_ENABLED` | `1` | one bounded worker expires stale offers |
 | `MASTERGO_MAX_ONLINE_HOURS` | `8` | automatically takes a master offline after one online session |
 | `MASTERGO_SUPPORT_INACTIVITY_HOURS` | `3` | closes a support chat when the operator is waiting for the user |

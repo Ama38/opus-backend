@@ -26,6 +26,11 @@ DATABASE_LOCK_TIMEOUT_MS = int(os.getenv("DATABASE_LOCK_TIMEOUT_MS", "5000"))
 REDIS_SOCKET_TIMEOUT_SECONDS = float(
     os.getenv("REDIS_SOCKET_TIMEOUT_SECONDS", "2")
 )
+# channels-redis waits up to 5 seconds for a message on an idle channel.
+# Its read timeout must be longer than that blocking Redis operation.
+CHANNELS_REDIS_SOCKET_TIMEOUT_SECONDS = float(
+    os.getenv("CHANNELS_REDIS_SOCKET_TIMEOUT_SECONDS", "10")
+)
 
 
 def database_from_url(database_url: str) -> dict:
@@ -183,7 +188,7 @@ else:
                             "REDIS_URL", "redis://localhost:6379/0"
                         ),
                         "socket_connect_timeout": REDIS_SOCKET_TIMEOUT_SECONDS,
-                        "socket_timeout": REDIS_SOCKET_TIMEOUT_SECONDS,
+                        "socket_timeout": CHANNELS_REDIS_SOCKET_TIMEOUT_SECONDS,
                         "health_check_interval": 30,
                         "retry_on_timeout": False,
                     }
