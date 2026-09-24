@@ -293,6 +293,12 @@ REST_FRAMEWORK = {
 
 MASTERGO_MOCK_OTP = env_bool("MASTERGO_MOCK_OTP", False)
 MASTERGO_MOCK_OTP_CODE = os.getenv("MASTERGO_MOCK_OTP_CODE", "1111")
+# Fixed phone/code given to Google Play reviewers in the "Sign in details"
+# declaration -- this number skips real SMS delivery and always accepts
+# MASTERGO_REVIEW_OTP_CODE, so a reviewer with no way to receive an SMS can
+# still log in. Every other phone number sends a real SMS as normal.
+MASTERGO_REVIEW_PHONE = os.getenv("MASTERGO_REVIEW_PHONE", "")
+MASTERGO_REVIEW_OTP_CODE = os.getenv("MASTERGO_REVIEW_OTP_CODE", "0000")
 MASTERGO_MIN_MASTER_BALANCE_UZS = 40_000  # deprecated: money-balance gate replaced by packages
 
 # --- Subscription / packages (v3) ---

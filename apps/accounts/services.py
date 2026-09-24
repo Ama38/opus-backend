@@ -9,7 +9,7 @@ from django.core.cache import cache
 from django.utils import timezone
 
 from .models import OTPPurpose, User
-from .sms import SmsError, send_otp_sms
+from .sms import SmsError, normalize_phone, send_otp_sms
 
 logger = logging.getLogger("mastergo.otp")
 
@@ -40,6 +40,15 @@ class OTPError(Exception):
         self.retry_after = retry_after
 
 
+def _is_review_phone(phone: str) -> bool:
+    """True for the fixed number given to Google Play reviewers in the
+    'Sign in details' declaration. Real SMS delivery isn't attempted for it
+    (a reviewer has no way to receive one) -- it always gets a fixed code
+    instead. Every other phone number is completely unaffected."""
+    review_phone = getattr(settings, "MASTERGO_REVIEW_PHONE", "")
+    return bool(review_phone) and normalize_phone(phone) == normalize_phone(review_phone)
+
+
 def start_otp(phone: str, purpose: str = OTPPurpose.LOGIN) -> OTPStartResult:
     now = timezone.now()
     phone_key = _phone_key(phone, purpose)
@@ -54,8 +63,11 @@ def start_otp(phone: str, purpose: str = OTPPurpose.LOGIN) -> OTPStartResult:
     if hourly_count >= OTP_HOURLY_LIMIT:
         raise OTPError("otp_hourly_limit", retry_after=3600)
 
+    is_review_phone = _is_review_phone(phone)
     if getattr(settings, "MASTERGO_MOCK_OTP", False):
         code = str(settings.MASTERGO_MOCK_OTP_CODE)
+    elif is_review_phone:
+        code = str(getattr(settings, "MASTERGO_REVIEW_OTP_CODE", "0000"))
     else:
         code = f"{random.randint(1000, 9999)}"
     expires_at = now + timedelta(seconds=OTP_TTL_SECONDS)
@@ -71,9 +83,10 @@ def start_otp(phone: str, purpose: str = OTPPurpose.LOGIN) -> OTPStartResult:
     cache.set(resend_key, OTP_RESEND_SECONDS, timeout=OTP_RESEND_SECONDS)
     cache.set(hourly_key, hourly_count + 1, timeout=60 * 60)
 
-    # In mock mode the code is a fixed well-known value, so no SMS is needed.
-    # Otherwise deliver it: real gateway in production, console in dry-run/dev.
-    if not getattr(settings, "MASTERGO_MOCK_OTP", False):
+    # In mock mode (or for the reviewer phone) the code is a fixed
+    # well-known value, so no SMS is needed. Otherwise deliver it: real
+    # gateway in production, console in dry-run/dev.
+    if not getattr(settings, "MASTERGO_MOCK_OTP", False) and not is_review_phone:
         try:
             send_otp_sms(phone, code)
         except SmsError as error:

@@ -59,6 +59,7 @@ class OrderSerializer(serializers.ModelSerializer):
     master_id = serializers.IntegerField(source="master.id", read_only=True)
     master_name = serializers.CharField(source="master.user.full_name", read_only=True)
     master_phone = serializers.CharField(source="master.user.phone", read_only=True)
+    master_face_photo_url = serializers.SerializerMethodField()
     pending_price_proposal_uzs = serializers.SerializerMethodField()
     pending_master_offer_id = serializers.SerializerMethodField()
     pending_master_offer_expires_at = serializers.SerializerMethodField()
@@ -81,6 +82,7 @@ class OrderSerializer(serializers.ModelSerializer):
             "master_id",
             "master_name",
             "master_phone",
+            "master_face_photo_url",
             "category",
             "category_id",
             "preferred_master_id",
@@ -113,6 +115,7 @@ class OrderSerializer(serializers.ModelSerializer):
             "master_id",
             "master_name",
             "master_phone",
+            "master_face_photo_url",
             "needs_operator",
             "status",
             "agreed_price_uzs",
@@ -131,6 +134,12 @@ class OrderSerializer(serializers.ModelSerializer):
 
     def get_client_reviewed(self, order: Order) -> bool:
         return order.reviews.filter(author=order.client_id).exists()
+
+    def get_master_face_photo_url(self, order: Order) -> str:
+        master = getattr(order, "master", None)
+        if master is None:
+            return ""
+        return master.face_photo_url or master.user.avatar_url or ""
 
     def get_pending_price_proposal_uzs(self, order: Order):
         proposal = order.price_proposals.filter(status=PriceProposalStatus.PENDING).order_by("-created_at").first()
