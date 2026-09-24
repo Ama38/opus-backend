@@ -13,7 +13,7 @@ from .serializers import (
     PasswordLoginSerializer,
     UserSerializer,
 )
-from .services import OTPError, start_otp, verify_otp
+from .services import AccountDeletionError, OTPError, delete_account, start_otp, verify_otp
 
 
 class MockOTPStartView(views.APIView):
@@ -75,6 +75,18 @@ class PasswordLoginView(views.APIView):
 class LogoutView(views.APIView):
     def post(self, request):
         Token.objects.filter(user=request.user).delete()
+        logout(request)
+        return response.Response({"status": "ok"})
+
+
+class DeleteAccountView(views.APIView):
+    """Self-service account deletion (Google Play account-deletion requirement)."""
+
+    def post(self, request):
+        try:
+            delete_account(request.user)
+        except AccountDeletionError as error:
+            return response.Response({"code": error.code}, status=status.HTTP_409_CONFLICT)
         logout(request)
         return response.Response({"status": "ok"})
 

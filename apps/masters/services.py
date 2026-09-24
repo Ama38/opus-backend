@@ -62,6 +62,34 @@ def master_has_active_subscription(master: MasterProfile) -> bool:
     return subscription is not None and subscription.is_active
 
 
+_BLOCKING_ORDER_STATUSES = [
+    OrderStatus.OFFERED_TO_MASTER,
+    OrderStatus.ACCEPTED_BY_MASTER,
+    OrderStatus.PRICE_PROPOSED,
+    OrderStatus.PRICE_ACCEPTED,
+    OrderStatus.MASTER_ON_WAY,
+    OrderStatus.MASTER_ARRIVED,
+    OrderStatus.IN_PROGRESS,
+    OrderStatus.DISPUTED,
+]
+
+
+def master_has_blocking_order(master: MasterProfile, *, exclude_order_id=None) -> bool:
+    """True if the master has an order that should block new offers.
+
+    WORK_DONE is deliberately not in the blocking set: once the master has
+    marked their side of the job done, whatever happens next (client
+    confirming, paying, or just never tapping "complete") is entirely on the
+    client -- the master has nothing left to do on that order, so they
+    should be free to take new work immediately rather than wait on the
+    client's action.
+    """
+    qs = master.orders.filter(status__in=_BLOCKING_ORDER_STATUSES)
+    if exclude_order_id is not None:
+        qs = qs.exclude(id=exclude_order_id)
+    return qs.exists()
+
+
 def master_can_receive_orders(master: MasterProfile) -> bool:
     if master.status != MasterStatus.APPROVED:
         return False
@@ -73,18 +101,41 @@ def master_can_receive_orders(master: MasterProfile) -> bool:
         return False
     if not master_has_active_subscription(master):
         return False
-    active_statuses = [
-        OrderStatus.OFFERED_TO_MASTER,
-        OrderStatus.ACCEPTED_BY_MASTER,
-        OrderStatus.PRICE_PROPOSED,
-        OrderStatus.PRICE_ACCEPTED,
-        OrderStatus.MASTER_ON_WAY,
-        OrderStatus.MASTER_ARRIVED,
-        OrderStatus.IN_PROGRESS,
-        OrderStatus.WORK_DONE,
-        OrderStatus.DISPUTED,
-    ]
-    return not master.orders.filter(status__in=active_statuses).exists()
+    return not master_has_blocking_order(master)
+
+
+def snapshot_leaderboard() -> int:
+    """Recompute the weekly leaderboard ranking (TZ §7.2).
+
+    Stores the previous rank alongside the new one so the app can show a
+    ↑/↓ indicator. Called by `manage.py snapshot_leaderboard` (manual/cron)
+    and periodically by the in-process sweeper (see apps.orders.sweeper),
+    so the ranking works even when no external scheduler is configured.
+    """
+    threshold = int(getattr(settings, "MASTERGO_NEWCOMER_ORDER_THRESHOLD", 10))
+    qualifying = list(
+        MasterProfile.objects.filter(
+            status=MasterStatus.APPROVED,
+            completed_orders_count__gte=threshold,
+        ).order_by("-completed_orders_count", "-rating", "id")
+    )
+    updated = 0
+    for index, master in enumerate(qualifying, start=1):
+        master.leaderboard_rank_prev = master.leaderboard_rank
+        master.leaderboard_rank = index
+        master.save(update_fields=["leaderboard_rank", "leaderboard_rank_prev", "updated_at"])
+        updated += 1
+
+    # Masters that dropped out of the qualifying set keep their prev rank but
+    # lose the current one.
+    for master in MasterProfile.objects.exclude(
+        id__in=[m.id for m in qualifying]
+    ).filter(leaderboard_rank__isnull=False):
+        master.leaderboard_rank_prev = master.leaderboard_rank
+        master.leaderboard_rank = None
+        master.save(update_fields=["leaderboard_rank", "leaderboard_rank_prev", "updated_at"])
+
+    return updated
 
 
 def expire_stale_online_sessions(*, now=None, limit: int = 100) -> int:

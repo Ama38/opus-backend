@@ -147,6 +147,73 @@ def _finalize_login(phone: str, *, full_name: str = "", language: str | None = N
     return OTPVerifyResult(user=user, is_new_user=is_new_user)
 
 
+class AccountDeletionError(Exception):
+    """Raised when an account can't be deleted right now."""
+
+    def __init__(self, code: str):
+        super().__init__(code)
+        self.code = code
+
+
+# Mirrors the "master is engaged" statuses used elsewhere (see
+# apps.masters.services.master_has_blocking_order) -- an order in one of
+# these means a real person (the other party) is actively depending on this
+# account, so deleting it out from under them would strand their job.
+_NON_DELETABLE_ORDER_STATUSES = [
+    "accepted_by_master",
+    "price_proposed",
+    "price_accepted",
+    "master_on_way",
+    "master_arrived",
+    "in_progress",
+    "work_done",
+    "disputed",
+]
+
+
+def user_has_active_order(user: User) -> bool:
+    from apps.orders.models import Order
+
+    if Order.objects.filter(client=user, status__in=_NON_DELETABLE_ORDER_STATUSES).exists():
+        return True
+    master_profile = getattr(user, "master_profile", None)
+    if master_profile is not None and master_profile.orders.filter(
+        status__in=_NON_DELETABLE_ORDER_STATUSES
+    ).exists():
+        return True
+    return False
+
+
+def delete_account(user: User) -> None:
+    """Anonymize and deactivate the account (Google Play deletion requirement).
+
+    The row itself is kept rather than hard-deleted: Order.client uses
+    on_delete=PROTECT, so a user with order history can't be removed without
+    breaking that history. Instead we anonymize personal data, free up the
+    phone number, and deactivate the account so it can never log in again.
+    """
+    if user_has_active_order(user):
+        raise AccountDeletionError("active_order_exists")
+
+    import uuid
+
+    from rest_framework.authtoken.models import Token
+
+    user.phone = f"deleted:{user.pk}:{uuid.uuid4().hex[:8]}"
+    user.full_name = ""
+    user.first_name = ""
+    user.last_name = ""
+    user.birth_date = None
+    user.avatar = None
+    user.avatar_url = ""
+    user.pinfl = ""
+    user.myid_verified_at = None
+    user.is_active = False
+    user.set_unusable_password()
+    user.save()
+    Token.objects.filter(user=user).delete()
+
+
 def get_or_create_client(phone: str, full_name: str = "") -> User:
     user, _ = User.objects.get_or_create(phone=phone, defaults={"full_name": full_name})
     if full_name and user.full_name != full_name:

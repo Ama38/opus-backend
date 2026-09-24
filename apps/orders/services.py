@@ -10,7 +10,11 @@ from django.utils import timezone
 
 from apps.billing.services import consume_order
 from apps.masters.models import MasterProfile
-from apps.masters.services import master_can_receive_orders, master_has_active_subscription
+from apps.masters.services import (
+    master_can_receive_orders,
+    master_has_active_subscription,
+    master_has_blocking_order,
+)
 from apps.notifications.models import NotificationEvent
 from apps.notifications.realtime import safe_group_send
 from apps.notifications.services import create_in_app_notification
@@ -1216,18 +1220,7 @@ def _master_can_accept_current_offer(master: MasterProfile, order: Order) -> boo
         return False
     if not master_has_active_subscription(master):
         return False
-    active_statuses = [
-        OrderStatus.OFFERED_TO_MASTER,
-        OrderStatus.ACCEPTED_BY_MASTER,
-        OrderStatus.PRICE_PROPOSED,
-        OrderStatus.PRICE_ACCEPTED,
-        OrderStatus.MASTER_ON_WAY,
-        OrderStatus.MASTER_ARRIVED,
-        OrderStatus.IN_PROGRESS,
-        OrderStatus.WORK_DONE,
-        OrderStatus.DISPUTED,
-    ]
-    return not master.orders.filter(status__in=active_statuses).exclude(id=order.id).exists()
+    return not master_has_blocking_order(master, exclude_order_id=order.id)
 
 
 @transaction.atomic

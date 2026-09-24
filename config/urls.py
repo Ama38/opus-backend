@@ -6,6 +6,8 @@ from django.http import JsonResponse
 from django.urls import include, path, re_path
 from django.views.static import serve as static_serve
 
+from .legal_views import privacy_policy, terms_of_service
+
 
 def health_check(request):
     return JsonResponse({"status": "ok", "service": "mastergo-backend"})
@@ -55,6 +57,8 @@ urlpatterns = [
     path("api/", api_index, name="api_index"),
     path("api/health/", health_check, name="health_check"),
     path("api/ready/", readiness_check, name="readiness_check"),
+    path("legal/privacy/", privacy_policy, name="privacy_policy"),
+    path("legal/terms/", terms_of_service, name="terms_of_service"),
     path("api/auth/", include("apps.accounts.urls")),
     path("api/", include("apps.masters.urls")),
     path("api/", include("apps.billing.urls")),
