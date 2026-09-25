@@ -1,5 +1,5 @@
 from pathlib import Path
-from urllib.parse import urlparse, unquote
+from urllib.parse import urlparse, unquote, urlsplit
 import os
 import sys
 
@@ -250,13 +250,54 @@ STORAGES = {
     "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
     "staticfiles": {"BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage"},
 }
+MASTERGO_MEDIA_STORAGE = os.getenv("MASTERGO_MEDIA_STORAGE", "local").strip().lower()
+if MASTERGO_MEDIA_STORAGE not in {"local", "r2"}:
+    raise ValueError("MASTERGO_MEDIA_STORAGE must be 'local' or 'r2'")
 if IS_TESTING:
     STORAGES["default"] = {
         "BACKEND": "django.core.files.storage.InMemoryStorage"
     }
-# Leading slash is required: without it FileField.url is a *relative* path and
-# request.build_absolute_uri() resolves it against the request path (e.g.
-# /api/media/... instead of /media/...), so avatars/attachments 404 in the apps.
+elif MASTERGO_MEDIA_STORAGE == "r2":
+    required_r2_settings = {
+        name: os.getenv(name, "").strip()
+        for name in (
+            "R2_ACCOUNT_ID",
+            "R2_BUCKET_NAME",
+            "R2_ACCESS_KEY_ID",
+            "R2_SECRET_ACCESS_KEY",
+            "R2_PUBLIC_BASE_URL",
+        )
+    }
+    missing = [name for name, value in required_r2_settings.items() if not value]
+    if missing:
+        raise ValueError(f"Missing R2 configuration: {', '.join(missing)}")
+    public_url = urlsplit(required_r2_settings["R2_PUBLIC_BASE_URL"])
+    if (
+        public_url.scheme != "https"
+        or not public_url.netloc
+        or public_url.path not in {"", "/"}
+        or public_url.query
+        or public_url.fragment
+    ):
+        raise ValueError("R2_PUBLIC_BASE_URL must be an HTTPS origin without a path")
+    STORAGES["default"] = {
+        "BACKEND": "storages.backends.s3.S3Storage",
+        "OPTIONS": {
+            "bucket_name": required_r2_settings["R2_BUCKET_NAME"],
+            "access_key": required_r2_settings["R2_ACCESS_KEY_ID"],
+            "secret_key": required_r2_settings["R2_SECRET_ACCESS_KEY"],
+            "endpoint_url": (
+                f"https://{required_r2_settings['R2_ACCOUNT_ID']}.r2.cloudflarestorage.com"
+            ),
+            "region_name": "auto",
+            "custom_domain": public_url.netloc,
+            "querystring_auth": False,
+            "default_acl": None,
+            "file_overwrite": False,
+        },
+    }
+# Local media needs a leading slash so request.build_absolute_uri() does not
+# resolve FileField.url against an API path such as /api/auth/me/.
 MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
 

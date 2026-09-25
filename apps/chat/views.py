@@ -1,7 +1,6 @@
 import json
 from uuid import uuid4
 
-from django.conf import settings
 from django.core.files.storage import default_storage
 from rest_framework import decorators, response, status, viewsets
 from rest_framework.renderers import JSONRenderer
@@ -74,7 +73,7 @@ class ChatMessageViewSet(viewsets.ReadOnlyModelViewSet):
         if upload is not None:
             safe_name = f"{uuid4().hex}_{upload.name}".replace(" ", "_")
             saved_path = default_storage.save(f"chat/{room.id}/{safe_name}", upload)
-            attachment_url = request.build_absolute_uri(settings.MEDIA_URL + saved_path)
+            attachment_url = request.build_absolute_uri(default_storage.url(saved_path))
         message = ChatMessage.objects.create(
             room=room,
             sender=request.user,

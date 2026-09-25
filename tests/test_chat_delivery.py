@@ -1,5 +1,7 @@
 from decimal import Decimal
+from unittest.mock import patch
 
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase, override_settings
 from rest_framework.test import APIClient
 
@@ -16,6 +18,44 @@ from apps.orders.services import transition_order
     }
 )
 class ChatDeliveryTests(TestCase):
+    def test_uploaded_attachment_uses_storage_url(self):
+        client = User.objects.create_user(phone="+998901111119", full_name="Client")
+        master_user = User.objects.create_user(phone="+998902222229", full_name="Master")
+        master = MasterProfile.objects.create(user=master_user, status=MasterStatus.APPROVED)
+        category = ServiceCategory.objects.create(
+            slug="plumber", name_ru="Сантехник", name_uz="Santexnik"
+        )
+        order = Order.objects.create(
+            client=client,
+            master=master,
+            category=category,
+            status=OrderStatus.ACCEPTED_BY_MASTER,
+            description="Течет кран",
+            address_text="Ташкент",
+            latitude=Decimal("41.312000"),
+            longitude=Decimal("69.241000"),
+        )
+        room = ChatRoom.objects.create(order=order)
+        api = APIClient()
+        api.force_authenticate(user=client)
+        media_url = "https://media.example.com/chat/upload.jpg"
+
+        with patch("apps.chat.views.default_storage.url", return_value=media_url):
+            response = api.post(
+                "/api/chat/messages/send/",
+                {
+                    "room_id": str(room.id),
+                    "kind": "photo",
+                    "attachment": SimpleUploadedFile(
+                        "upload.jpg", b"image data", content_type="image/jpeg"
+                    ),
+                },
+                format="multipart",
+            )
+
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(response.json()["message"]["attachment_url"], media_url)
+
     def test_send_echoes_client_message_id_for_optimistic_reconciliation(self):
         client = User.objects.create_user(phone="+998901111111", full_name="Client")
         master_user = User.objects.create_user(phone="+998902222222", full_name="Master")

@@ -68,7 +68,9 @@ urlpatterns = [
     path("api/", include("apps.reviews.urls")),
     path("api/", include("apps.support.urls")),
     path("api/", include("apps.notifications.urls")),
-    # User-uploaded media (avatars, chat photos/videos). Fine for the prototype;
-    # move to object storage (S3) before real scale.
-    re_path(r"^media/(?P<path>.*)$", static_serve, {"document_root": settings.MEDIA_ROOT}),
 ]
+
+if settings.MASTERGO_MEDIA_STORAGE == "local":
+    urlpatterns.append(
+        re_path(r"^media/(?P<path>.*)$", static_serve, {"document_root": settings.MEDIA_ROOT})
+    )

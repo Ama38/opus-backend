@@ -67,6 +67,11 @@ python manage.py test tests   # run the suite
 | `MASTERGO_REALTIME_SEND_TIMEOUT_SECONDS` | `2` | Redis must not block API requests |
 | `DATABASE_STATEMENT_TIMEOUT_MS` | `20000` | bounds slow/locked SQL statements |
 | `MAPBOX_ACCESS_TOKEN` | restricted public token | forward/reverse Geocoding v6 |
+| `MASTERGO_MEDIA_STORAGE` | `r2` | Use `local` for local development; `r2` needs all five values below |
+| `R2_ACCOUNT_ID` | Cloudflare account ID | Builds the R2 S3 endpoint |
+| `R2_BUCKET_NAME` | dedicated media bucket | Public reads through the domain below |
+| `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` | bucket-scoped R2 API token keys | Keep in Railway backend variables only |
+| `R2_PUBLIC_BASE_URL` | `https://media.example.com` | Custom domain connected to the R2 bucket; no path |
 | `MASTERGO_MOCK_OTP` | `1` first, `0` for real SMS | `1` = fixed code, no SMS |
 | `MASTERGO_MOCK_OTP_CODE` | `1111` | used only when mock is on |
 | `SMS_DRY_RUN` | `0` for real SMS | `1` = log code instead of sending |
@@ -76,6 +81,24 @@ python manage.py test tests   # run the suite
 > **SMS note:** Eskiz only delivers a fixed test string until your sender name
 > and template are moderated/approved. Keep `MASTERGO_MOCK_OTP=1` (login with
 > code `1111`) for the first test round, then flip to real SMS once approved.
+
+### Cloudflare R2 media
+
+Create a dedicated R2 bucket and a bucket-scoped API token with object read and
+write permission. Connect a custom domain to the bucket in Cloudflare R2 bucket
+settings. Set the six media variables above on the Railway backend service and
+redeploy. The backend writes through R2's S3 API using region `auto`, while
+returned media URLs use the custom domain. Django Admin static files stay on
+WhiteNoise. Mobile apps continue uploading through the Django API and need no
+R2 credentials or configuration.
+
+The custom domain makes uploaded media publicly readable, consistent with the
+existing `/media/` URLs. Use this bucket only for media intended for that access
+model. The `r2.dev` URL is for development traffic only. Existing local uploads
+are not migrated automatically; copy them to the same keys in R2 before enabling
+`MASTERGO_MEDIA_STORAGE=r2` if those URLs must keep working. Verify a newly
+uploaded avatar, order photo, chat attachment, and portfolio image after deploy.
+The backend fails at startup if R2 is selected without complete configuration.
 
 ## Connecting the apps
 
